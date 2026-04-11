@@ -10,30 +10,54 @@ import type { GameEvent } from "../ws/protocol";
 import PriceChart from "./PriceChart";
 import { TICKER_HEIGHT } from "./NewsTicker";
 
+const AURA_TOP5_BONUSES = [50, 40, 30, 25, 20] as const;
+
 function describeEvent(ev: GameEvent): string {
   switch (ev.kind) {
-    case "order_filled":       return `Order filled: ${ev.side} ${ev.quantity} @ $${parseFloat(ev.price).toFixed(2)}`;
-    case "farm_burned":        return `Farm #${ev.farm_id} was set on fire`;
-    case "farm_healed":        return `Farm #${ev.farm_id} recovered`;
-    case "mill_burned":        return `Mill #${ev.mill_id} was burned`;
-    case "worker_killed":      return `A worker on farm #${ev.farm_id} was killed`;
-    case "npc_killed":         return `${ev.npc_name} was eliminated`;
-    case "npc_farm_auctioned": return `Farm #${ev.farm_id} auctioned for $${parseFloat(ev.price).toFixed(0)}`;
-    case "rumor":              return `Rumor: "${ev.text}"`;
-    case "drought":            return `Drought — ${ev.cycles} cycles of poor weather`;
-    case "famine":             return "Famine — supply collapse";
-    case "bumper_harvest":     return "Bumper harvest — exceptional yields";
-    case "market_panic":       return "Market panic — prices crashed";
-    case "nuclear_fallout":    return "NUCLEAR FALLOUT";
-    case "fields_planted":     return `Farm #${ev.farm_id} planted ${ev.count} fields`;
-    case "corn_harvested":     return `Farm #${ev.farm_id} harvested ${ev.bushels} bushels`;
-    case "corn_sold":          return `Corn sold — ${ev.bushels} bu for $${parseFloat(ev.revenue).toFixed(0)}`;
-    case "option_expired":     return `Option expired — PnL $${parseFloat(ev.pnl).toFixed(0)}`;
-    case "player_joined":      return `${ev.name} joined`;
-    case "cycle_start":        return `Cycle ${ev.cycle} started`;
-    case "game_over":          return `Game over: ${ev.reason}`;
-    case "headline":           return `"${ev.text}"`;
-    default:                   return "";
+    case "order_filled":
+      return `Order filled: ${ev.side} ${ev.quantity} @ $${parseFloat(ev.price).toFixed(2)}`;
+    case "farm_burned":
+      return `Farm #${ev.farm_id} was set on fire`;
+    case "farm_healed":
+      return `Farm #${ev.farm_id} recovered`;
+    case "mill_burned":
+      return `Mill #${ev.mill_id} was burned`;
+    case "worker_killed":
+      return `A worker on farm #${ev.farm_id} was killed`;
+    case "npc_killed":
+      return `${ev.npc_name} was eliminated`;
+    case "npc_farm_auctioned":
+      return `Farm #${ev.farm_id} auctioned for $${parseFloat(ev.price).toFixed(0)}`;
+    case "rumor":
+      return `Rumor: "${ev.text}"`;
+    case "drought":
+      return `Drought — ${ev.cycles} cycles of poor weather`;
+    case "famine":
+      return "Famine — supply collapse";
+    case "bumper_harvest":
+      return "Bumper harvest — exceptional yields";
+    case "market_panic":
+      return "Market panic — prices crashed";
+    case "nuclear_fallout":
+      return "NUCLEAR FALLOUT";
+    case "fields_planted":
+      return `Farm #${ev.farm_id} planted ${ev.count} fields`;
+    case "corn_harvested":
+      return `Farm #${ev.farm_id} harvested ${ev.bushels} bushels`;
+    case "corn_sold":
+      return `Corn sold — ${ev.bushels} bu for $${parseFloat(ev.revenue).toFixed(0)}`;
+    case "option_expired":
+      return `Option expired — PnL $${parseFloat(ev.pnl).toFixed(0)}`;
+    case "player_joined":
+      return `${ev.name} joined`;
+    case "cycle_start":
+      return `Cycle ${ev.cycle} started`;
+    case "game_over":
+      return `Game over: ${ev.reason}`;
+    case "headline":
+      return `"${ev.text}"`;
+    default:
+      return "";
   }
 }
 
@@ -46,54 +70,44 @@ export default function HostScreen() {
   const isSummary = state.phase === "summary";
   const phase = `Cycle ${state.cycle}`;
   const playerText = `${state.knownPlayers.length} player${state.knownPlayers.length !== 1 ? "s" : ""}`;
-  const joinText = `${playerText} (join using ${state.gameCode ?? "----"})`;
+  const joinText = `${playerText} (join with code: ${state.gameCode ?? "----"})`;
   const hist = state.priceHistory.map(parseFloat).filter((n) => !isNaN(n));
   const prev = hist.length >= 2 ? hist[hist.length - 2] : null;
   const change = prev !== null ? priceNum - prev : 0;
   const changePct = prev && prev !== 0 ? (change / prev) * 100 : 0;
-  const changeColor = prev === null ? "#6b6b63" : change >= 0 ? "#1d6b1d" : "#a03333";
+  const changeColor =
+    prev === null ? "#6b6b63" : change >= 0 ? "#1d6b1d" : "#a03333";
   const changeSign = change >= 0 ? "+" : "";
   const returns = hist.slice(1).map((priceValue, index) => {
     const prior = hist[index];
     return prior !== 0 ? (priceValue - prior) / prior : 0;
   });
-  const avgReturn = returns.length ? returns.reduce((sum, value) => sum + value, 0) / returns.length : 0;
-  const volatilityPct = returns.length
-    ? Math.sqrt(returns.reduce((sum, value) => sum + (value - avgReturn) ** 2, 0) / returns.length) * 100
+  const avgReturn = returns.length
+    ? returns.reduce((sum, value) => sum + value, 0) / returns.length
     : 0;
-  const strikeDepthMap = new Map<string, { bid: number; ask: number; total: number }>();
-  for (const positions of Object.values(state.playerOptionPositions)) {
-    for (const position of positions) {
-      const parsed = Number.parseFloat(position.strike);
-      const strike = Number.isFinite(parsed) ? parsed.toFixed(2) : position.strike;
-      const current = strikeDepthMap.get(strike) ?? { bid: 0, ask: 0, total: 0 };
-      if (position.long) {
-        current.bid += position.quantity;
-      } else {
-        current.ask += position.quantity;
-      }
-      current.total += position.quantity;
-      strikeDepthMap.set(strike, current);
-    }
-  }
-  const strikeRows = Array.from(strikeDepthMap.entries())
-    .sort((a, b) => {
-      if (b[1].total !== a[1].total) return b[1].total - a[1].total;
-      return Number.parseFloat(b[0]) - Number.parseFloat(a[0]);
-    })
-    .slice(0, 3);
+  const volatilityPct = returns.length
+    ? Math.sqrt(
+        returns.reduce((sum, value) => sum + (value - avgReturn) ** 2, 0) /
+          returns.length,
+      ) * 100
+    : 0;
 
   // Local countdown — mirrors state.secondsRemaining but ticks every 1s locally
   // so the display doesn't stutter waiting for server messages.
   const [localSecs, setLocalSecs] = useState<number | null>(null);
   useEffect(() => {
     // Only tick during a live decision phase; hide before game starts or when paused.
-    if (state.phase !== "decision") { setLocalSecs(null); return; }
+    if (state.phase !== "decision") {
+      setLocalSecs(null);
+      return;
+    }
     if (state.paused) return; // freeze display, don't start a new interval
     setLocalSecs(state.secondsRemaining);
-    const id = setInterval(() => setLocalSecs(s => (s !== null && s > 0 ? s - 1 : s)), 1000);
+    const id = setInterval(
+      () => setLocalSecs((s) => (s !== null && s > 0 ? s - 1 : s)),
+      1000,
+    );
     return () => clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.secondsRemaining, state.phase, state.paused, state.cycle]);
 
   // Cycle duration control — default 8s matches server config default
@@ -109,7 +123,9 @@ export default function HostScreen() {
   const [autoCountdown, setAutoCountdown] = useState<number | null>(null);
   // Keep send stable inside the interval callback
   const sendRef = useRef(send);
-  useEffect(() => { sendRef.current = send; }, [send]);
+  useEffect(() => {
+    sendRef.current = send;
+  }, [send]);
 
   // Entering /host during lobby should immediately start the match.
   useEffect(() => {
@@ -128,10 +144,13 @@ export default function HostScreen() {
     if (autoCycle && state.phase === "summary") {
       setAutoCountdown(5);
       const interval = setInterval(() => {
-        setAutoCountdown(prev => {
+        setAutoCountdown((prev) => {
           if (prev === null || prev <= 1) {
             clearInterval(interval);
-            sendRef.current({ type: "admin", command: { cmd: "continue_game" } });
+            sendRef.current({
+              type: "admin",
+              command: { cmd: "continue_game" },
+            });
             return null;
           }
           return prev - 1;
@@ -141,7 +160,6 @@ export default function HostScreen() {
     }
     setAutoCountdown(null);
     // phase and autoCycle are the only triggers; sendRef is stable
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoCycle, state.phase]);
 
   function endGame() {
@@ -153,7 +171,10 @@ export default function HostScreen() {
   }
 
   function togglePause() {
-    send({ type: "admin", command: { cmd: state.paused ? "resume_game" : "pause_game" } });
+    send({
+      type: "admin",
+      command: { cmd: state.paused ? "resume_game" : "pause_game" },
+    });
   }
 
   return (
@@ -171,7 +192,14 @@ export default function HostScreen() {
               </>
             ) : (
               <div style={styles.phaseBlock}>
-                <span style={{ ...styles.phase, ...(state.paused ? { color: "#c8a830", fontWeight: 700 } : {}) }}>
+                <span
+                  style={{
+                    ...styles.phase,
+                    ...(state.paused
+                      ? { color: "#c8a830", fontWeight: 700 }
+                      : {}),
+                  }}
+                >
                   {state.paused ? "⏸ PAUSED" : phase}
                 </span>
                 <div style={styles.joinHintRow}>
@@ -188,12 +216,19 @@ export default function HostScreen() {
             <div style={styles.rightBtnRow}>
               {isSummary ? (
                 <>
-                  <button style={styles.continueBtn} onClick={continueGame}>Continue</button>
+                  <button style={styles.continueBtn} onClick={continueGame}>
+                    Continue
+                  </button>
                   <button
-                    style={{ ...styles.autoBtn, ...(autoCycle ? styles.autoBtnOn : {}) }}
-                    onClick={() => setAutoCycle(v => !v)}
+                    style={{
+                      ...styles.autoBtn,
+                      ...(autoCycle ? styles.autoBtnOn : {}),
+                    }}
+                    onClick={() => setAutoCycle((v) => !v)}
                   >
-                    {autoCycle && autoCountdown !== null ? `Auto ${autoCountdown}s` : "Auto"}
+                    {autoCycle && autoCountdown !== null
+                      ? `Auto ${autoCountdown}s`
+                      : "Auto"}
                   </button>
                 </>
               ) : (
@@ -202,7 +237,12 @@ export default function HostScreen() {
                     style={{
                       ...styles.pauseBtn,
                       ...(state.paused
-                        ? { background: "#c8a830", border: "2px solid #c8a830", color: "#ffffff", fontWeight: 700 }
+                        ? {
+                            background: "#c8a830",
+                            border: "2px solid #c8a830",
+                            color: "#ffffff",
+                            fontWeight: 700,
+                          }
                         : {}),
                     }}
                     onClick={togglePause}
@@ -210,21 +250,40 @@ export default function HostScreen() {
                     {state.paused ? "Resume" : "Pause"}
                   </button>
                   <button
-                    style={{ ...styles.autoBtn, ...(autoCycle ? styles.autoBtnOn : {}) }}
-                    onClick={() => setAutoCycle(v => !v)}
+                    style={{
+                      ...styles.autoBtn,
+                      ...(autoCycle ? styles.autoBtnOn : {}),
+                    }}
+                    onClick={() => setAutoCycle((v) => !v)}
                   >
                     Auto
                   </button>
                 </>
               )}
-              <button style={styles.endBtn} onClick={endGame}>End</button>
+              <button style={styles.endBtn} onClick={endGame}>
+                End
+              </button>
             </div>
             <div style={styles.secsRow}>
-              <button style={styles.secsAdj} onClick={() => adjustCycleSecs(-5)}>−5</button>
-              <button style={styles.secsAdj} onClick={() => adjustCycleSecs(-1)}>−1</button>
+              <button
+                style={styles.secsAdj}
+                onClick={() => adjustCycleSecs(-5)}
+              >
+                −5
+              </button>
+              <button
+                style={styles.secsAdj}
+                onClick={() => adjustCycleSecs(-1)}
+              >
+                −1
+              </button>
               <span style={styles.secsLabel}>{cycleSecs}s</span>
-              <button style={styles.secsAdj} onClick={() => adjustCycleSecs(1)}>+1</button>
-              <button style={styles.secsAdj} onClick={() => adjustCycleSecs(5)}>+5</button>
+              <button style={styles.secsAdj} onClick={() => adjustCycleSecs(1)}>
+                +1
+              </button>
+              <button style={styles.secsAdj} onClick={() => adjustCycleSecs(5)}>
+                +5
+              </button>
             </div>
           </div>
         </div>
@@ -242,48 +301,29 @@ export default function HostScreen() {
               <span style={styles.priceValue}>${price}</span>
             </div>
             <div style={{ ...styles.priceChange, color: changeColor }}>
-              {changeSign}{change.toFixed(2)} ({changeSign}{changePct.toFixed(2)}%)
-            </div>
-          </div>
-
-          <div style={styles.marketDepthBlock}>
-            <div style={styles.depthHeaderRow}>
-              <span style={styles.depthColStrike}>Strike</span>
-              <span style={styles.depthColNum}>Bid</span>
-              <span style={styles.depthColNum}>Ask</span>
-            </div>
-            {strikeRows.length === 0 ? (
-              <div style={styles.depthEmptyRow}>
-                <span style={styles.depthColStrike}>--</span>
-                <span style={styles.depthColNum}>0</span>
-                <span style={styles.depthColNum}>0</span>
-              </div>
-            ) : (
-              strikeRows.map(([strike, depth]) => (
-                <div key={strike} style={styles.depthDataRow}>
-                  <span style={styles.depthColStrike}>{strike}</span>
-                  <span style={styles.depthColNum}>{depth.bid}</span>
-                  <span style={styles.depthColNum}>{depth.ask}</span>
-                </div>
-              ))
-            )}
-            <div style={styles.depthTotalsRow}>
-              <span style={styles.depthColStrike}>Book</span>
-              <span style={styles.depthColNum}>{state.bidDepth}</span>
-              <span style={styles.depthColNum}>{state.askDepth}</span>
+              {changeSign}
+              {change.toFixed(2)} ({changeSign}
+              {changePct.toFixed(2)}%)
             </div>
           </div>
         </div>
 
         <div style={styles.graphMetaRow}>
-          <span style={styles.volumeText}>Volume this cycle {state.cycleVolume}</span>
+          <span style={styles.volumeText}>
+            Volume this cycle {state.cycleVolume}
+          </span>
           <span style={styles.metaDivider} />
-          <span style={styles.volumeText}>Volatility {volatilityPct.toFixed(1)}%</span>
+          <span style={styles.volumeText}>
+            Volatility {volatilityPct.toFixed(1)}%
+          </span>
         </div>
 
         <div style={styles.chartRow}>
           <div style={{ ...styles.chartBox, flex: 1 }}>
-            <PriceChart history={state.priceHistory} volumeHistory={state.volumeHistory} />
+            <PriceChart
+              history={state.priceHistory}
+              volumeHistory={state.volumeHistory}
+            />
           </div>
         </div>
       </div>
@@ -293,7 +333,9 @@ export default function HostScreen() {
         <div style={styles.card}>
           <h2 style={styles.cardTitle}>Cycle {state.cycle} Events</h2>
           {state.cycleEvents.map((ev, i) => (
-            <p key={i} style={styles.eventRow}>{describeEvent(ev)}</p>
+            <p key={i} style={styles.eventRow}>
+              {describeEvent(ev)}
+            </p>
           ))}
         </div>
       )}
@@ -302,7 +344,9 @@ export default function HostScreen() {
       {state.headlines.length > 0 && (
         <div style={styles.card}>
           <h2 style={styles.cardTitle}>Latest Headline</h2>
-          <p style={styles.headline}>{state.headlines[state.headlines.length - 1].text}</p>
+          <p style={styles.headline}>
+            {state.headlines[state.headlines.length - 1].text}
+          </p>
         </div>
       )}
 
@@ -316,9 +360,7 @@ export default function HostScreen() {
 
       {/* ── Decision countdown — fixed screen-centre overlay ─────────────── */}
       {localSecs !== null && (
-        <div style={styles.countdownOverlay}>
-          {localSecs}
-        </div>
+        <div style={styles.countdownOverlay}>{localSecs}</div>
       )}
     </div>
   );
@@ -326,22 +368,30 @@ export default function HostScreen() {
 
 function MilestoneSummary() {
   const state = useGameState();
-  const hist = state.priceHistory.map(parseFloat).filter(n => !isNaN(n));
+  // const hist = state.priceHistory.map(parseFloat).filter((n) => !isNaN(n));
 
   // Price 5 cycles ago vs now
-  const nowPrice = hist.length ? hist[hist.length - 1] : null;
-  const thenPrice = hist.length >= 6 ? hist[hist.length - 6] : hist[0] ?? null;
-  const priceDelta = nowPrice != null && thenPrice != null && thenPrice !== 0
-    ? ((nowPrice - thenPrice) / thenPrice) * 100
-    : null;
+  // const nowPrice = hist.length ? hist[hist.length - 1] : null;
+  // const thenPrice =
+  //   hist.length >= 6 ? hist[hist.length - 6] : (hist[0] ?? null);
+  // const priceDelta =
+  //   nowPrice != null && thenPrice != null && thenPrice !== 0
+  //     ? ((nowPrice - thenPrice) / thenPrice) * 100
+  //     : null;
 
   // Leaderboard from accumulated PlayerState broadcasts
   const leaderboard = Object.entries(state.playerNetWorths)
-    .map(([id, { name, netWorth }]) => ({ id: Number(id), name, netWorth: parseFloat(netWorth) }))
+    .map(([id, { name, netWorth }]) => ({
+      id: Number(id),
+      name,
+      netWorth: parseFloat(netWorth),
+    }))
     .sort((a, b) => b.netWorth - a.netWorth);
 
   // Dedicated milestone summary — arrives async shortly after the phase change.
-  const summaryReady = state.milestoneSummary !== null && state.milestoneSummary.cycle === state.cycle;
+  const summaryReady =
+    state.milestoneSummary !== null &&
+    state.milestoneSummary.cycle === state.cycle;
 
   return (
     <div style={styles.milestoneCard}>
@@ -359,7 +409,7 @@ function MilestoneSummary() {
 
       {/* ── Stats + leaderboard ─────────────────────────────────────────── */}
       <div style={styles.milestoneBody}>
-        <div style={styles.milestoneStat}>
+        {/* <div style={styles.milestoneStat}>
           <span style={styles.milestoneStatLabel}>Price (last 5 cycles)</span>
           <span style={styles.milestoneStatValue}>
             {nowPrice != null ? `$${nowPrice.toFixed(2)}` : "—"}
@@ -369,16 +419,27 @@ function MilestoneSummary() {
               </span>
             )}
           </span>
-        </div>
+        </div> */}
 
         {leaderboard.length > 0 && (
           <div style={styles.milestoneLeaderboard}>
             <span style={styles.milestoneStatLabel}>Leaderboard</span>
+            <div style={styles.leaderHeaderRow}>
+              <span style={styles.leaderHeaderRank}>#</span>
+              <span style={styles.leaderHeaderName}>Player</span>
+              {/* <span style={styles.leaderHeaderNum}>Net Worth</span> */}
+              <span style={styles.leaderHeaderNum}>Bonus Aura</span>
+            </div>
             {leaderboard.map((p, i) => (
               <div key={p.id} style={styles.leaderRow}>
                 <span style={styles.leaderRank}>{i + 1}</span>
                 <span style={styles.leaderName}>{p.name}</span>
-                <span style={styles.leaderWorth}>${p.netWorth.toFixed(0)}</span>
+                {/* <span style={styles.leaderWorth}>${p.netWorth.toFixed(0)}</span> */}
+                <span style={styles.leaderBonus}>
+                  {i < AURA_TOP5_BONUSES.length
+                    ? `+${AURA_TOP5_BONUSES[i]}`
+                    : "-"}
+                </span>
               </div>
             ))}
           </div>
@@ -488,7 +549,13 @@ const styles = {
     alignItems: "flex-start",
     minWidth: 0,
   },
-  phase: { color: "#5a5a54", fontSize: "1.15rem", fontWeight: 500, flex: 1, minWidth: 0 },
+  phase: {
+    color: "#5a5a54",
+    fontSize: "1.15rem",
+    fontWeight: 500,
+    flex: 1,
+    minWidth: 0,
+  },
   phasePlayers: {
     fontSize: "0.85rem",
     color: "#8a8a80",
@@ -694,12 +761,25 @@ const styles = {
     flexDirection: "column" as const,
     width: "fit-content",
   },
-  priceLabel: { margin: 0, color: "#67675f", fontSize: "1rem", fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase" as const },
-  priceValue: { margin: "0.2rem 0 0", fontSize: "clamp(2.5rem, 5vw, 6rem)", fontWeight: "800" as const, color: "#18181a", lineHeight: 1 },
+  priceLabel: {
+    margin: 0,
+    color: "#67675f",
+    fontSize: "1rem",
+    fontWeight: 800,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase" as const,
+  },
+  priceValue: {
+    margin: "0.2rem 0 0",
+    fontSize: "clamp(2.5rem, 5vw, 6rem)",
+    fontWeight: "800" as const,
+    color: "#18181a",
+    lineHeight: 1,
+  },
   priceChange: {
-    fontSize: "1.14rem",
-    fontWeight: 700,
-    lineHeight: 1.1,
+    fontSize: "clamp(1.45rem, 2.1vw, 2.1rem)",
+    fontWeight: 800,
+    lineHeight: 1,
     marginBottom: "0.45rem",
     whiteSpace: "nowrap" as const,
     textAlign: "left" as const,
@@ -811,10 +891,29 @@ const styles = {
     borderRadius: 10,
     padding: "1rem 1.25rem",
   },
-  cardTitle: { margin: "0 0 1rem", fontSize: "0.85rem", color: "#67675f", fontWeight: 800, letterSpacing: "0.09em", textTransform: "uppercase" as const },
+  cardTitle: {
+    margin: "0 0 1rem",
+    fontSize: "0.85rem",
+    color: "#67675f",
+    fontWeight: 800,
+    letterSpacing: "0.09em",
+    textTransform: "uppercase" as const,
+  },
   empty: { color: "#9a9a90", fontSize: "1.1rem", margin: 0 },
-  headline: { margin: 0, color: "#2a2a26", fontStyle: "italic" as const, fontSize: "1.2rem", lineHeight: 1.7 },
-  summary: { margin: 0, color: "#3a3a36", fontSize: "1.05rem", lineHeight: 1.8, whiteSpace: "pre-wrap" as const },
+  headline: {
+    margin: 0,
+    color: "#2a2a26",
+    fontStyle: "italic" as const,
+    fontSize: "1.2rem",
+    lineHeight: 1.7,
+  },
+  summary: {
+    margin: 0,
+    color: "#3a3a36",
+    fontSize: "1.05rem",
+    lineHeight: 1.8,
+    whiteSpace: "pre-wrap" as const,
+  },
   eventRow: {
     margin: "0 0 0.5rem",
     fontSize: "1rem",
@@ -911,10 +1010,41 @@ const styles = {
     flex: 1,
     minWidth: 0,
   },
-  leaderRow: {
-    display: "flex",
+  leaderHeaderRow: {
+    display: "grid",
+    gridTemplateColumns: "1.6rem minmax(0, 1fr) 6.8rem",
+    gap: "0.5rem",
     alignItems: "center",
-    gap: "0.6rem",
+    padding: "0.05rem 0 0.15rem",
+    borderBottom: "1px solid #e1ddd6",
+  },
+  leaderHeaderRank: {
+    fontSize: "0.7rem",
+    color: "#8a8a80",
+    fontWeight: "700" as const,
+    textAlign: "left" as const,
+  },
+  leaderHeaderName: {
+    fontSize: "0.7rem",
+    color: "#8a8a80",
+    fontWeight: "700" as const,
+    textAlign: "left" as const,
+    letterSpacing: "0.03em",
+    textTransform: "uppercase" as const,
+  },
+  leaderHeaderNum: {
+    fontSize: "0.7rem",
+    color: "#8a8a80",
+    fontWeight: "700" as const,
+    textAlign: "right" as const,
+    letterSpacing: "0.03em",
+    textTransform: "uppercase" as const,
+  },
+  leaderRow: {
+    display: "grid",
+    gridTemplateColumns: "1.6rem minmax(0, 1fr) 6.8rem",
+    alignItems: "center",
+    gap: "0.5rem",
     padding: "0.3rem 0",
     borderBottom: "1px solid #e8e4df",
     minWidth: 0,
@@ -940,6 +1070,14 @@ const styles = {
     fontSize: "1rem",
     fontWeight: "700" as const,
     color: "#1d6b1d",
+    fontFamily: "monospace",
+    textAlign: "right" as const,
+  },
+  leaderBonus: {
+    fontSize: "0.95rem",
+    fontWeight: "700" as const,
+    color: "#1d6b1d",
+    textAlign: "right" as const,
     fontFamily: "monospace",
   },
 } as const;

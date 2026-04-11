@@ -8,10 +8,29 @@ import { useGameState } from "../state/store";
 import type { GameEvent } from "../ws/protocol";
 import { TICKER_HEIGHT } from "./NewsTicker";
 
+const AURA_TOP5_BONUSES = [50, 40, 30, 25, 20] as const;
+
 export default function SummaryScreen() {
   const state = useGameState();
   const cash = parseFloat(state.myCash);
   const netWorth = parseFloat(state.myNetWorth);
+  const isCheckpointCycle = state.cycle > 0 && state.cycle % 5 === 0;
+  const leaderboard = Object.entries(state.playerNetWorths)
+    .map(([id, { name, netWorth: nw }]) => ({
+      id: Number(id),
+      name,
+      netWorth: parseFloat(nw),
+    }))
+    .sort((a, b) => b.netWorth - a.netWorth);
+  const myRankIndex = leaderboard.findIndex((p) => p.id === state.myPlayerId);
+  const myAuraBonus =
+    isCheckpointCycle && myRankIndex >= 0 && myRankIndex < AURA_TOP5_BONUSES.length
+      ? AURA_TOP5_BONUSES[myRankIndex]
+      : 0;
+  const auraValue =
+    myAuraBonus > 0
+      ? `${state.myAura.toFixed(0)} (+${myAuraBonus})`
+      : state.myAura.toFixed(0);
 
   return (
     <div style={s.root}>
@@ -27,7 +46,7 @@ export default function SummaryScreen() {
           <StatCell label="Cash" value={`$${cash.toFixed(0)}`} />
           <StatCell label="Shares" value={String(state.myShares)} color={state.myShares < 0 ? "#7a1a1a" : undefined} />
           <StatCell label="Net Worth" value={`$${netWorth.toFixed(0)}`} color="#1d6b1d" />
-          <StatCell label="Aura" value={state.myAura.toFixed(0)} color="#7a5010" />
+          <StatCell label="Aura" value={auraValue} color="#7a5010" />
         </div>
       </div>
 

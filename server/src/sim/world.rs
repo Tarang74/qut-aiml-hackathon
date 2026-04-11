@@ -307,6 +307,23 @@ impl World {
             player.aura += aura::AURA_PER_CYCLE;
         }
 
+        // Every 5 cycles, reward top net-worth players with bonus aura.
+        if (self.cycle + 1).is_multiple_of(aura::AURA_LEADERBOARD_BONUS_INTERVAL_CYCLES) {
+            let vol = self.realized_vol();
+            let mut standings: Vec<(PlayerId, Decimal)> = self
+                .players
+                .iter()
+                .map(|(pid, p)| (*pid, p.portfolio.net_worth(self.price, self.cycle, vol)))
+                .collect();
+            standings.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0 .0.cmp(&b.0 .0)));
+
+            for (rank, (pid, _)) in standings.into_iter().take(5).enumerate() {
+                if let Some(player) = self.players.get_mut(&pid) {
+                    player.aura += aura::AURA_TOP5_BONUSES[rank];
+                }
+            }
+        }
+
         // 7. Decay world modifiers.
         if self.drought_cycles > 0 {
             self.drought_cycles -= 1;

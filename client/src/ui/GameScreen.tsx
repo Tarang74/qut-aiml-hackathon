@@ -1479,17 +1479,7 @@ function GodTab({
   return (
     <>
       <div style={s.card}>
-        <div style={s.statGrid}>
-          <Stat label="Aura" value={aura.toFixed(0)} color="#7a5010" />
-          <Stat
-            label="Next power"
-            value={aura < 60 ? `${(60 - aura).toFixed(0)} needed` : "unlocked"}
-            color={aura >= 60 ? "#1d6b1d" : "#9a9a90"}
-          />
-        </div>
-      </div>
-      <div style={s.card}>
-        <p style={s.cardTitle}>Powers (+10 aura/cycle, top-5 bonus every 5 cycles)</p>
+        <p style={s.cardTitle}>Powers</p>
         <div
           style={{
             display: "flex",
@@ -1528,7 +1518,14 @@ function GodTab({
                 disabled={isLocked}
                 onClick={() => act(p.action, p.label)}
               >
-                <div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-start",
+                    textAlign: "left",
+                  }}
+                >
                   <span
                     style={{
                       ...s.actionBtnLabel,
@@ -1538,7 +1535,6 @@ function GodTab({
                     {isSelected ? "✓ " : ""}
                     {p.label}
                   </span>
-                  <br />
                   <span style={s.actionBtnSub}>{p.sub}</span>
                 </div>
                 <span

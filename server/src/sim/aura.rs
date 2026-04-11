@@ -1,18 +1,20 @@
 /// Aura earned per cycle by every player, regardless of what they do.
 pub const AURA_PER_CYCLE: f64 = 10.0;
+pub const AURA_LEADERBOARD_BONUS_INTERVAL_CYCLES: u64 = 5;
+pub const AURA_TOP5_BONUSES: [f64; 5] = [50.0, 40.0, 30.0, 25.0, 20.0];
 
 /// God-tier aura costs.
-pub const COST_DROUGHT: f64 = 80.0;
-pub const COST_FAMINE: f64 = 150.0;
-pub const COST_BUMPER_HARVEST: f64 = 60.0;
-pub const COST_MARKET_PANIC: f64 = 100.0;
-pub const COST_NUCLEAR_FALLOUT: f64 = 300.0;
+pub const COST_DROUGHT: f64 = 100.0;
+pub const COST_FAMINE: f64 = 500.0;
+pub const COST_BUMPER_HARVEST: f64 = 50.0;
+pub const COST_MARKET_PANIC: f64 = 250.0;
+pub const COST_NUCLEAR_FALLOUT: f64 = 1000.0;
 
 /// Chaotic action aura costs.
-pub const COST_BURN_FARM: f64 = 20.0;
-pub const COST_BURN_MILL: f64 = 25.0;
-pub const COST_HITMAN_WORKER: f64 = 15.0;
-pub const COST_HITMAN_OWNER: f64 = 50.0;
+pub const COST_BURN_FARM: f64 = 200.0;
+pub const COST_BURN_MILL: f64 = 250.0;
+pub const COST_HITMAN_WORKER: f64 = 500.0;
+pub const COST_HITMAN_OWNER: f64 = 750.0;
 pub const COST_RUMOR: f64 = 5.0;
 
 /// Aura earned when a player takes a chaotic action (bonus on top of cycle tick).

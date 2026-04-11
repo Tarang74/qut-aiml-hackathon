@@ -6,7 +6,7 @@
  */
 import { useGameState } from "../state/store";
 
-export const TICKER_HEIGHT = 30; // px — keep in sync with s.bar height
+export const TICKER_HEIGHT = 38; // px — keep in sync with s.bar height
 
 export default function NewsTicker() {
   const { headlines, cycleEvents } = useGameState();
@@ -56,6 +56,7 @@ const s = {
     left: 0,
     right: 0,
     height: TICKER_HEIGHT,
+    gap: "0.5rem",
     zIndex: 1000,
     display: "flex",
     alignItems: "center",
@@ -67,12 +68,12 @@ const s = {
     flexShrink: 0,
     background: "#c8a830",
     color: "#ffffff",
-    fontSize: "0.6rem",
+    fontSize: "0.7rem",
     fontWeight: "700" as const,
     letterSpacing: "0.12em",
-    padding: "0.15rem 0.5rem",
-    marginLeft: "0.5rem",
-    borderRadius: 2,
+    padding: "0.2rem 0.6rem",
+    marginLeft: "0.6rem",
+    borderRadius: 3,
   },
   track: {
     flex: 1,
@@ -82,7 +83,7 @@ const s = {
   text: {
     display: "inline-block",
     whiteSpace: "nowrap" as const,
-    fontSize: "0.75rem",
+    fontSize: "0.85rem",
     color: "#7a5010",
     letterSpacing: "0.02em",
   },

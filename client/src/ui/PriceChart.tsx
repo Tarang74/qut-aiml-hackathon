@@ -1,6 +1,7 @@
 /**
  * PriceChart — Three.js line chart for the price history.
  * Fills its container; call from a div with explicit height.
+ * HTML overlay renders Y-axis price labels and X-axis index labels.
  */
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
@@ -9,8 +10,16 @@ interface Props {
   history: string[];
 }
 
+// Vertical padding fraction used when mapping prices → NDC y.
+const PAD = 0.1;
+
+// How many horizontal grid bands (grid lines = BANDS + 1).
+const H_BANDS = 4;
+// How many vertical grid bands (grid lines = V_BANDS + 1).
+const V_BANDS = 6;
+
 export default function PriceChart({ history }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
@@ -19,7 +28,7 @@ export default function PriceChart({ history }: Props) {
 
   // Initialise Three.js once.
   useEffect(() => {
-    const container = containerRef.current;
+    const container = mountRef.current;
     if (!container) return;
 
     const scene = new THREE.Scene();
@@ -42,13 +51,13 @@ export default function PriceChart({ history }: Props) {
 
     // Faint grid lines.
     const gridMat = new THREE.LineBasicMaterial({ color: 0xe0ddd8 });
-    for (let i = 0; i <= 4; i++) {
-      const y = (i / 4) * 2 - 1;
+    for (let i = 0; i <= H_BANDS; i++) {
+      const y = (i / H_BANDS) * 2 - 1;
       const pts = [new THREE.Vector3(-1, y, 0), new THREE.Vector3(1, y, 0)];
       scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), gridMat));
     }
-    for (let i = 0; i <= 6; i++) {
-      const x = (i / 6) * 2 - 1;
+    for (let i = 0; i <= V_BANDS; i++) {
+      const x = (i / V_BANDS) * 2 - 1;
       const pts = [new THREE.Vector3(x, -1, 0), new THREE.Vector3(x, 1, 0)];
       scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), gridMat));
     }
@@ -104,7 +113,6 @@ export default function PriceChart({ history }: Props) {
     const minP = Math.min(...prices);
     const maxP = Math.max(...prices);
     const range = maxP - minP || 1;
-    const PAD = 0.1; // vertical padding
 
     const positions = new Float32Array(prices.length * 3);
     for (let i = 0; i < prices.length; i++) {
@@ -122,5 +130,105 @@ export default function PriceChart({ history }: Props) {
     renderer.render(scene, cam);
   }, [history]);
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+  // --- Label computation (pure, from history prop) ---
+  const prices = history.map(parseFloat).filter(isFinite);
+  const hasData = prices.length >= 2;
+  const minP = hasData ? Math.min(...prices) : 0;
+  const maxP = hasData ? Math.max(...prices) : 1;
+  const range = maxP - minP || 1;
+
+  // Y-axis: one label per horizontal grid line.
+  // NDC y values: from -1 (bottom) to +1 (top) in H_BANDS+1 steps.
+  // NDC y → % from top: (1 - ndc_y) / 2 * 100
+  // NDC y → price: (ndc_y + (1-PAD)) / (2 - 2*PAD) * range + minP
+  const yLabels = hasData
+    ? Array.from({ length: H_BANDS + 1 }, (_, i) => {
+        const ndc = (i / H_BANDS) * 2 - 1; // -1 .. +1
+        const topPct = ((1 - ndc) / 2) * 100;
+        const price = ((ndc + (1 - PAD)) / (2 - 2 * PAD)) * range + minP;
+        // Clamp translateY so labels at the very edge stay visible.
+        const ty = topPct <= 5 ? 0 : topPct >= 95 ? -100 : -50;
+        return { topPct, price, ty };
+      })
+    : [];
+
+  // X-axis: labels at each vertical grid line.
+  // NDC x → history index: (ndc_x + 1) / 2 * (len - 1)
+  const xLabels = hasData
+    ? Array.from({ length: V_BANDS + 1 }, (_, i) => {
+        const frac = i / V_BANDS; // 0 .. 1
+        const idx = Math.round(frac * (prices.length - 1));
+        // Clamp translateX so edge labels don't overflow.
+        const tx = i === 0 ? 0 : i === V_BANDS ? -100 : -50;
+        return { leftPct: frac * 100, idx, tx };
+      })
+    : [];
+
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      {/* Three.js canvas mount */}
+      <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
+
+      {/* Y-axis price labels (left edge) */}
+      {yLabels.map(({ topPct, price, ty }, i) => (
+        <span
+          key={i}
+          style={{
+            position: "absolute",
+            left: 6,
+            top: `${topPct}%`,
+            transform: `translateY(${ty}%)`,
+            fontSize: 11,
+            fontFamily: "monospace",
+            color: "#5a5a54",
+            background: "rgba(250,248,244,0.82)",
+            borderRadius: 2,
+            padding: "0 3px",
+            lineHeight: 1.4,
+            pointerEvents: "none",
+            whiteSpace: "nowrap",
+          }}
+        >
+          ${price.toFixed(2)}
+        </span>
+      ))}
+
+      {/* X-axis index labels (bottom edge) */}
+      {xLabels.map(({ leftPct, idx, tx }, i) => (
+        <span
+          key={i}
+          style={{
+            position: "absolute",
+            bottom: 4,
+            left: `${leftPct}%`,
+            transform: `translateX(${tx}%)`,
+            fontSize: 10,
+            fontFamily: "monospace",
+            color: "#8a8a80",
+            pointerEvents: "none",
+            lineHeight: 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {idx === 0 ? "start" : idx === prices.length - 1 ? "now" : `t${idx}`}
+        </span>
+      ))}
+
+      {/* Axis labels */}
+      <span style={{
+        position: "absolute",
+        left: 6,
+        top: "50%",
+        transform: "translateY(-50%) rotate(-90deg) translateX(50%)",
+        transformOrigin: "left center",
+        fontSize: 10,
+        color: "#aaa8a0",
+        pointerEvents: "none",
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+      }}>
+        Price
+      </span>
+    </div>
+  );
 }

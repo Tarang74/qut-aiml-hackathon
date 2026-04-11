@@ -4,7 +4,6 @@
  * Admin/spectator view. Never joins as a player.
  * Shows the live price chart, stock price, player list (with kick), and AI summaries.
  */
-import { useState } from "react";
 import { useGameState, useWsSend } from "../state/store";
 import type { GameEvent } from "../ws/protocol";
 import PriceChart from "./PriceChart";
@@ -40,8 +39,6 @@ function describeEvent(ev: GameEvent): string {
 export default function HostScreen() {
   const state = useGameState();
   const send = useWsSend();
-  const [copied, setCopied] = useState(false);
-
   const price = parseFloat(state.price).toFixed(2);
   const isSummary = state.phase === "summary";
   const phase = state.phase === "lobby" ? "Waiting for players…" : `${state.phase} — cycle ${state.cycle}`;
@@ -67,18 +64,14 @@ export default function HostScreen() {
     send({ type: "admin", command: { cmd: state.paused ? "resume_game" : "pause_game" } });
   }
 
-  async function copyUrl() {
-    if (!joinUrl) return;
-    await navigator.clipboard.writeText(joinUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
   return (
     <div style={styles.root}>
       <div style={styles.header}>
         <span style={styles.badge}>HOST VIEW</span>
-        <span style={styles.phase}>{state.paused ? "⏸ PAUSED" : phase}</span>
+        <span style={styles.phase}>
+          {state.paused ? "⏸ PAUSED" : phase}
+          {joinUrl && <span style={styles.urlInline}> · {joinUrl}</span>}
+        </span>
         {state.phase === "lobby" ? (
           <button style={styles.startBtn} onClick={startGame}>
             Start Game
@@ -99,16 +92,6 @@ export default function HostScreen() {
           </>
         )}
       </div>
-
-      {/* ── Join URL ─────────────────────────────────────────────────────── */}
-      {joinUrl && (
-        <div style={styles.urlBar}>
-          <span style={styles.urlText}>{joinUrl}</span>
-          <button style={styles.copyBtn} onClick={copyUrl}>
-            {copied ? "✓ Copied" : "Copy"}
-          </button>
-        </div>
-      )}
 
       {/* ── Price + chart ─────────────────────────────────────────────────── */}
       <div style={styles.priceCard}>
@@ -209,9 +192,9 @@ export default function HostScreen() {
 
 function MiniStat({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "center", minWidth: 44 }}>
-      <span style={{ fontSize: "0.6rem", color: "#8a8a80", letterSpacing: "0.06em", textTransform: "uppercase" as const }}>{label}</span>
-      <span style={{ fontSize: "0.85rem", fontWeight: "600" as const, color: color ?? "#3a3a36", marginTop: 2 }}>{value}</span>
+    <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "center", minWidth: 64 }}>
+      <span style={{ fontSize: "0.75rem", color: "#8a8a80", letterSpacing: "0.06em", textTransform: "uppercase" as const, fontWeight: 600 }}>{label}</span>
+      <span style={{ fontSize: "1.1rem", fontWeight: "700" as const, color: color ?? "#3a3a36", marginTop: 2 }}>{value}</span>
     </div>
   );
 }
@@ -221,155 +204,140 @@ const styles = {
     display: "flex",
     flexDirection: "column" as const,
     alignItems: "stretch",
-    gap: "1.5rem",
-    padding: "1.5rem 2rem",
+    gap: "1.75rem",
+    padding: "2rem 3rem",
+    maxWidth: 1100,
+    margin: "0 auto",
     width: "100%",
     minHeight: "100vh",
     background: "#f5f3ef",
-    paddingTop: `calc(1.5rem + ${TICKER_HEIGHT}px)`,
+    paddingTop: `calc(2rem + ${TICKER_HEIGHT}px)`,
   },
   header: {
     display: "flex",
     alignItems: "center",
     flexWrap: "wrap" as const,
-    gap: "0.75rem",
+    gap: "1rem",
   },
   badge: {
     background: "#e8eef5",
     color: "#1a3a6a",
-    fontSize: "0.8rem",
-    fontWeight: "bold" as const,
-    letterSpacing: "0.1em",
-    padding: "0.3rem 0.8rem",
-    borderRadius: 3,
-    flexShrink: 0,
-  },
-  phase: { color: "#7a7a70", fontSize: "1rem", flex: 1, minWidth: 0 },
-  startBtn: {
-    background: "#e8f5e8",
-    border: "1px solid #4a9a4a",
-    color: "#1d6b1d",
-    fontSize: "1rem",
-    fontWeight: "bold" as const,
-    padding: "0.5rem 1.5rem",
+    fontSize: "0.85rem",
+    fontWeight: "700" as const,
+    letterSpacing: "0.12em",
+    padding: "0.4rem 1rem",
     borderRadius: 4,
+    flexShrink: 0,
+    textTransform: "uppercase" as const,
+  },
+  phase: { color: "#5a5a54", fontSize: "1.15rem", fontWeight: 500, flex: 1, minWidth: 0 },
+  startBtn: {
+    background: "#1d6b1d",
+    border: "none",
+    color: "#ffffff",
+    fontSize: "1rem",
+    fontWeight: "700" as const,
+    padding: "0.6rem 1.8rem",
+    borderRadius: 6,
     cursor: "pointer",
     flexShrink: 0,
+    letterSpacing: "0.02em",
   },
   pauseBtn: {
     background: "transparent",
-    border: "1px solid #c8b060",
+    border: "2px solid #c8b060",
     color: "#7a5010",
-    fontSize: "0.9rem",
-    padding: "0.4rem 1rem",
-    borderRadius: 3,
+    fontSize: "1rem",
+    fontWeight: 600,
+    padding: "0.5rem 1.2rem",
+    borderRadius: 6,
     cursor: "pointer",
     flexShrink: 0,
   },
   endBtn: {
     background: "transparent",
-    border: "1px solid #c89090",
+    border: "2px solid #c89090",
     color: "#7a1a1a",
-    fontSize: "0.9rem",
-    padding: "0.4rem 1rem",
-    borderRadius: 3,
-    cursor: "pointer",
-    flexShrink: 0,
-  },
-  urlBar: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.75rem",
-    background: "#ffffff",
-    border: "1px solid #ddd9d2",
-    borderRadius: 6,
-    padding: "0.65rem 1rem",
-    minWidth: 0,
-  },
-  urlText: {
-    flex: 1,
     fontSize: "1rem",
-    color: "#1d6b1d",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap" as const,
-    minWidth: 0,
-  },
-  copyBtn: {
-    background: "transparent",
-    border: "1px solid #c8c4be",
-    color: "#5a5a54",
-    fontSize: "0.85rem",
-    padding: "0.35rem 0.9rem",
-    borderRadius: 3,
+    fontWeight: 600,
+    padding: "0.5rem 1.2rem",
+    borderRadius: 6,
     cursor: "pointer",
     flexShrink: 0,
+  },
+  urlInline: {
+    fontFamily: "monospace",
+    color: "#1d6b1d",
+    fontWeight: 600,
   },
   priceCard: {
     background: "#ffffff",
     border: "1px solid #ddd9d2",
-    borderRadius: 8,
-    padding: "1.5rem",
+    borderRadius: 10,
+    padding: "1.75rem 2rem",
   },
   priceLine: {
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
     flexWrap: "wrap" as const,
-    gap: "1rem",
-    marginBottom: "1.25rem",
+    gap: "1.5rem",
+    marginBottom: "1.5rem",
   },
-  priceLabel: { margin: 0, color: "#8a8a80", fontSize: "0.9rem", letterSpacing: "0.12em" },
-  priceValue: { margin: "0.25rem 0 0", fontSize: "5rem", fontWeight: "bold" as const, color: "#1d6b1d", lineHeight: 1 },
-  countdown: { margin: "0.5rem 0 0", color: "#7a7a70", fontSize: "1rem" },
+  priceLabel: { margin: 0, color: "#8a8a80", fontSize: "1rem", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase" as const },
+  priceValue: { margin: "0.2rem 0 0", fontSize: "6rem", fontWeight: "800" as const, color: "#1d6b1d", lineHeight: 1 },
+  countdown: { margin: "0.6rem 0 0", color: "#5a5a54", fontSize: "1.2rem", fontWeight: 600 },
   chartBox: {
     width: "100%",
-    height: 320,
-    borderRadius: 4,
+    height: 340,
+    borderRadius: 6,
     overflow: "hidden",
   },
   card: {
     background: "#ffffff",
     border: "1px solid #ddd9d2",
-    borderRadius: 8,
-    padding: "1.25rem 1.5rem",
+    borderRadius: 10,
+    padding: "1.5rem 2rem",
   },
-  cardTitle: { margin: "0 0 0.75rem", fontSize: "0.9rem", color: "#8a8a80", letterSpacing: "0.08em", textTransform: "uppercase" as const },
-  empty: { color: "#9a9a90", fontSize: "1rem", margin: 0 },
+  cardTitle: { margin: "0 0 1rem", fontSize: "0.85rem", color: "#8a8a80", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const },
+  empty: { color: "#9a9a90", fontSize: "1.1rem", margin: 0 },
   table: { width: "100%", borderCollapse: "collapse" as const },
-  th: { textAlign: "left" as const, color: "#9a9a90", fontSize: "0.8rem", padding: "0 0.75rem 0.6rem", letterSpacing: "0.06em" },
-  td: { color: "#3a3a36", fontSize: "1rem", padding: "0.5rem 0.75rem", borderTop: "1px solid #e8e4df" },
+  th: { textAlign: "left" as const, color: "#8a8a80", fontSize: "0.85rem", fontWeight: 700, padding: "0 1rem 0.75rem", letterSpacing: "0.07em", textTransform: "uppercase" as const },
+  td: { color: "#2a2a26", fontSize: "1.1rem", padding: "0.65rem 1rem", borderTop: "1px solid #e8e4df" },
   kickBtn: {
     background: "transparent",
     border: "1px solid #c89090",
     color: "#7a1a1a",
-    fontSize: "0.85rem",
-    padding: "0.3rem 0.75rem",
-    borderRadius: 3,
+    fontSize: "0.9rem",
+    fontWeight: 600,
+    padding: "0.35rem 0.9rem",
+    borderRadius: 4,
     cursor: "pointer",
   },
-  headline: { margin: 0, color: "#3a3a36", fontStyle: "italic" as const, fontSize: "1.05rem", lineHeight: 1.6 },
-  summary: { margin: 0, color: "#4a4a44", fontSize: "1rem", lineHeight: 1.7, whiteSpace: "pre-wrap" as const },
+  headline: { margin: 0, color: "#2a2a26", fontStyle: "italic" as const, fontSize: "1.2rem", lineHeight: 1.7 },
+  summary: { margin: 0, color: "#3a3a36", fontSize: "1.05rem", lineHeight: 1.8, whiteSpace: "pre-wrap" as const },
   marketMini: {
-    display: "flex", flexWrap: "wrap" as const, gap: "1rem 1.5rem",
+    display: "flex", flexWrap: "wrap" as const, gap: "1rem 2rem",
     alignItems: "flex-start",
   },
   eventRow: {
-    margin: "0 0 0.35rem",
-    fontSize: "0.85rem",
-    color: "#4a4a44",
-    borderLeft: "2px solid #ddd9d2",
-    paddingLeft: "0.6rem",
+    margin: "0 0 0.5rem",
+    fontSize: "1rem",
+    color: "#3a3a36",
+    borderLeft: "3px solid #ddd9d2",
+    paddingLeft: "0.75rem",
+    lineHeight: 1.5,
   },
   continueBtn: {
-    background: "#e8f5e8",
-    border: "1px solid #4a9a4a",
-    color: "#1d6b1d",
+    background: "#1d6b1d",
+    border: "none",
+    color: "#ffffff",
     fontSize: "1rem",
-    fontWeight: "bold" as const,
-    padding: "0.5rem 1.5rem",
-    borderRadius: 4,
+    fontWeight: "700" as const,
+    padding: "0.6rem 1.8rem",
+    borderRadius: 6,
     cursor: "pointer",
     flexShrink: 0,
+    letterSpacing: "0.02em",
   },
 } as const;

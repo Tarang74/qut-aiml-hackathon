@@ -16,10 +16,13 @@ server (single Rust binary)
   ├─ net/      axum WebSocket gateway
   ├─ sim/      cycle FSM, world state, SDE integrator, event log
   ├─ market/   order book, matching, options pricing, portfolio
-  ├─ agents/   100 NPCs (noise, momentum, reversion, fundamental, market makers)
+  ├─ agents/   100 anonymous market traders + NPC owner autopilot
   ├─ corp/     wealth tiers, takeovers, squeezes
-  └─ llm/      narrator (per-cycle) + debrief (end-of-game) via reqwest
+  ├─ llm/      per-player feedback (Haiku) + admin summary (Sonnet), rolling context
+  └─ stats/    deterministic end-of-game awards (no LLM)
 ```
+
+The LLM is **only** used during the per-cycle feedback phase for private player coaching and the admin summary. End-of-game awards are pure math from the event log — no LLM, fully reproducible.
 
 Sim core is **single-threaded and deterministic given a seed**. WS gateway talks to it via `tokio::sync::mpsc` for inbound and `tokio::sync::broadcast` for outbound. Don't add threads to the sim. Don't add a database. Don't add a framework on the frontend beyond what's already in `package.json`.
 
@@ -40,7 +43,7 @@ Sim core is **single-threaded and deterministic given a seed**. WS gateway talks
 Run the appropriate check **once** after a logical chunk of changes, not after every line:
 
 - Rust: `cargo check` for compile, `cargo test` if you wrote or touched tests, `cargo clippy -- -D warnings` before declaring done
-- TS: `npm tsc --noEmit` for type check, `npm run build` only at the end of a build step
+- TS: `pnpm tsc --noEmit` for type check, `pnpm build` only at the end of a build step
 
 If a check fails, fix it and re-run **at most twice** before stopping to report. Don't loop indefinitely.
 
@@ -67,7 +70,6 @@ If a check fails, fix it and re-run **at most twice** before stopping to report.
 - `useReducer` over `useState` once a component has 3+ pieces of state
 - Mirror server protocol types in `client/src/ws/protocol.ts` — keep them in sync by hand for MVP
 - No default exports except for React components
-- Use prettier and ESLint and use `npm run format` and `npm run lint` to format and lint code. This reduces the risk of obscuring commits with whitespace/formatting changes 
 
 ### Comments
 - **Comment *why*, not *what*.** Code shows what; comments justify non-obvious choices.
@@ -101,7 +103,7 @@ After each build step, write a short summary in this format:
 - What you think step N+1 should be
 ```
 
-Keep it under ~20 lines. The human is reviewing this between commits.
+Keep it under ~20 lines. The human is reviewing this on a phone between commits.
 
 ## Things that will get you in trouble
 

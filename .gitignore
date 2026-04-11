@@ -1,6 +1,7 @@
 # Secrets / generated env files
 .env
 development.env
+client/.env.local
 terraform/terraform.tfvars
 terraform/.terraform/
 terraform/.terraform.lock.hcl

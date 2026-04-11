@@ -24,8 +24,8 @@ IMAGE_NAME="aura-farmers:latest"
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
-echo "==> Building Docker image..."
-docker build -t "$IMAGE_NAME" "$REPO_ROOT"
+echo "==> Building Docker image (linux/amd64)..."
+docker build --platform linux/amd64 -t "$IMAGE_NAME" "$REPO_ROOT"
 
 # ── Ship ──────────────────────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ ssh -i "$SSH_KEY" "${ssh_user}@${instance_ip}" bash <<ENDSSH
   docker run -d \
     --name ${CONTAINER_NAME} \
     --restart unless-stopped \
-    -p ${app_port}:${app_port} \
+    -p 80:${app_port} \
     --env-file /app/.env \
     ${IMAGE_NAME}
   docker image prune -f

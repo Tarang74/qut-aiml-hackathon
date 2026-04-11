@@ -1,316 +1,194 @@
-# Aura Farmers — Handoff Prompt for Claude Code
+# Aura Farmers — Handoff
 
-Paste this as the first message in a fresh Claude Code session to bootstrap context.
+Read this and `CLAUDE.md` at the start of every session before touching any code.
 
 ---
 
-I'm building a hackathon project called **Aura Farmers**. Full design below. Read it, read `CLAUDE.md` in the repo root, then wait for me to tell you which step to start on. Do not start coding until I greenlight a specific build step.
+## What this is
 
-## Concept
+A multiplayer financial markets game set in a chaotic corn economy. Players trade CornCo stock, write options, run farms, and spend **aura** on chaos actions (arson, hitmen, god-tier market events). The price is driven by a jump-diffusion SDE whose drift is mutated by everything players and 100 NPC traders do. After each cycle an AI coach gives private feedback to each player; a separate AI summary lands on the host's screen. End-of-game is a pure-math leaderboard — no LLM.
 
-A multiplayer financial markets game set in a chaotic corn economy. Players spend each cycle either trading the market like rational investors — buying CornCo stock, writing options, hedging — or sabotaging it like agents of chaos — torching fields, hiring hitmen, and saving up enough **aura** to play god and bend reality toward famine or nuclear fallout. The corn price is governed by a jump-diffusion process whose drift is mutated by everything players (and 100 NPCs) do, so the chart on screen is a live consequence of the room's collective greed and malice. An AI narrator reports the public events each cycle, and at the end of the game an AI-written debrief reveals what was actually going on under the surface.
-
-## World model (three layers)
-
-The world is split into three layers. Every entity lives on exactly one layer and interacts with the others through well-defined interfaces. This keeps the model clean as features pile up.
-
-### Layer 1 — Physical assets
-Where corn actually gets grown.
-
-- **Farms** — each has an owner, a number of fields, and a number of workers. Workers are an *attribute* of the farm (a productivity multiplier), not independent entities. A farm with 5 workers produces 5× baseline yield. No workers, no production. Farms have a state: `healthy | burning | idle`.
-- **Elevators** — each has an owner and a throughput capacity. Process harvested corn into sellable inventory. Can be burned.
-
-### Layer 2 — Actors (anyone who makes decisions)
-- **Players** — humans, picking actions each cycle
-- **NPC farm owners** — 5 of them at game start, each named, each owning one farm with workers, runs on autopilot (hire workers, plant, harvest, sell, occasionally hedge)
-- **NPC industrialists** — 2 of them, named, each owning one elevator, runs on autopilot
-
-These are the only "characters" with names, portfolios, and aura. NPC owners can be killed (permanently) or bought out.
-
-### Layer 3 — The market
-Pure financial layer. Everyone with cash trades here: all players, all named NPC owners, plus 100 abstract anonymous traders that exist *only* on this layer (see NPCs section). Workers do not trade.
-
-## Roles (picked at game start)
-
-Roles set the player's *starting position*. After the game starts, anyone can buy any asset — the role label is just a starting bundle, not a permanent gate.
-
-- **Farmer** — starts with 1 farm, 3 fields, 2 workers, modest cash.
-- **Industrialist** — starts with 1 elevator, small option position, modest cash.
-- **Trader** — starts with no assets, extra cash.
-
-Every role can take every chaotic and god-tier action. Anyone can buy farms, elevators, or workers later.
-
-## The cycle loop
-
-Each cycle (default ~20s, admin-tunable):
-
-1. **Decision phase** — every player picks one action (or passes). Committed silently.
-2. **Resolution phase** — actions apply simultaneously, SDE advances, NPCs trade, order book matches, prices move, narrator drops a public headline.
-3. **Aura tick** — everyone earns aura each cycle automatically. Passing just means you don't spend any.
-
-## Action menu
-
-**Constructive (anyone with the right asset)**
-- Plant a field (farm owners)
-- Harvest corn (farm owners)
-- Hire a worker (farm owners) — increases farm productivity
-- Operate the elevator (elevator owners)
-- Buy/sell CornCo stock (everyone)
-- Buy/sell/write European options on CornCo (everyone)
-- Short CornCo (everyone)
-
-**Chaotic (visible-but-anonymous in public events)**
-- Burn a rival's farm — visible damage, farm enters `burning` state
-- Burn the grain elevator — temporary supply shock
-- **Hitman — worker hit** (cheap) — kills 1 worker on a target farm, drops productivity
-- **Hitman — owner hit** (expensive) — kills the target owner. NPC owners die permanently and the farm goes to auction; player owners are removed for one cycle and the narrator writes their obituary.
-- Spread a rumor — fake headline injected into the narrator stream
-
-**God-tier (huge aura cost)**
-- Drought — raises probability of bad weather for N cycles
-- Famine — supply collapse, demand shock
-- Nuclear fallout — destroys a fraction of all fields, massive vol spike. **Ends the game if it fires.**
-- Bumper harvest — opposite of drought
-- Market panic — injects a downward jump
-
-Players never see underlying probabilities. The narrator reports what happens, never what was risked.
-
-## Wealth tiers (corporate actions)
-
-Once a player's net worth crosses a threshold, new actions unlock.
-
-**Tier 1 — Conglomerate (>$500k net worth, admin-tunable)**
-- **Acquire a field / elevator** — forced buyout of an NPC-owned asset at market price + premium.
-- **Hostile takeover of a rival's field** — public offer at N× book value. Other players can counter-bid.
-- **Price floor / ceiling contracts** — standing orders to buy below $X or sell above $Y.
-
-**Tier 2 — Monopoly (>$2M net worth AND >40% of fields or elevator capacity)**
-- **Dump** — large block sell, craters the price.
-- **Corner the market** — buy enough supply to set spot price for several cycles. Triggered when one entity holds >X% of deliverable corn.
-- **Lobby the weather** — spend cash to reduce bad-weather probability on your own fields.
-- **Blacklist a rival** — refuse to trade with a specific player.
-
-### Squeeze mechanics
-- **Supply squeeze** — buy spot, refuse to sell, dictate harvest prices to small farmers
-- **Input squeeze** — elevator owner refuses to process a specific farmer's harvest
-- **Options squeeze** — write deep-OTM options, then trigger a god-tier event to force them ITM
-- **Short squeeze** — detect heavy short interest and corner against it
-
-### Counter-balancers (essential)
-1. **Monopoly attracts sabotage** — chaos score multiplier for sabotaging monopolists
-2. **Antitrust events** — random NPC event forces divestment at fire-sale prices
-3. **Cash ≠ aura** — wealth unlocks corporate actions but not god-tier. A broke chaos agent can still nuke an empire builder.
-4. **Liquidity cost** — corner/dump actions incur real slippage against the NPC book
-5. **Public visibility** — narrator announces threshold crossings publicly without leaking numbers
-
-## What players see vs. what's hidden
-
-**Public:** live price chart, order book top, own portfolio, public world events, AI narrator headlines.
-
-**Hidden until debrief:** other players' net worth, aura, positions, PnL; who cast which god-tier event; who hired the hitman; who started the rumor; chaos/kindness scores; leaderboards.
-
-There is **no live leaderboard**. The reveal at the end is the payoff.
-
-## NPCs
-
-NPCs split into two groups serving different purposes. Workers are **not** NPCs — they're an integer attribute on a farm.
-
-### World participants (named characters, gameplay targets)
-
-Inhabit the world, own physical assets, can be sabotaged or acquired. The narrator talks about them by name. They participate in the market by selling their harvest and occasionally hedging.
-
-| Count | Type | Notes |
-|---|---|---|
-| 5 | NPC farm owners | Each named, owns 1 farm with workers, runs on autopilot (hire, plant, harvest, sell, occasionally hedge). Can be killed by an owner-hit hitman; farm goes to auction. |
-| 2 | NPC industrialists | Each named, owns 1 elevator, processes corn for a fee, runs on autopilot. Can be killed or bought out. |
-
-### Market participants (anonymous, liquidity)
-
-Pure trading agents that exist only on the market layer. Players never see them as characters — they're just the other side of every trade. The mix is what creates emergent realism: momentum amplifies trends, mean-reversion brakes them, fundamentalists anchor to truth, market makers provide the spread, noise traders add baseline activity.
-
-| Count | Strategy | What they do |
-|---|---|---|
-| 40 | Noise traders | Random buy/sell at random times, baseline liquidity (the "dumb money" — retail panic, lottery-ticket gamblers). Without them the order book feels dead. |
-| 25 | Momentum traders | Buy when price has been rising recently, sell when falling. Amplify rallies and crashes — a small spike snowballs into a big one. |
-| 20 | Mean-reversion traders | Buy when price has crashed below average, sell when it has spiked above. Brake runaway prices, create natural choppy oscillation. |
-| 10 | Fundamentalists | Compute "fair value" from world state (planted acreage, weather, demand) with noisy info, trade toward that value. Anchor prices to reality so famines actually move the market. |
-| 5 | Day-trader market makers | Quote both sides of the book simultaneously (bid + ask), earn the spread, hedge inventory using options to stay neutral. The pros everyone trades against. **Can blow up dramatically** on catastrophic single-cycle losses. |
-
-**Total: 7 named NPCs + 100 anonymous market traders.**
-
-### Market maker blowups
-Day traders track inventory and PnL. Catastrophic single-cycle drawdown (god-tier event wrecking their hedged book, coordinated squeeze, etc.) → blow up and exit. Spread widens, surviving MMs may briefly pull quotes (small contagion effect). Narrator emits a death headline naming them. Chaos credit toward **Widowmaker** award. If all 5 blow up → **market collapse** game-end condition.
-
-### Workers (not NPCs — a property of farms)
-Workers are just an integer on a farm: more workers means more yield. They don't trade, don't act, don't have names in code. They can be killed by worker-hit hitman actions (decrements the count) or scattered when a farm burns. The fiction is richer than the simulation — the narrator can reference "three workers on the Hopkins farm" by name without those workers ever existing as code entities.
-
-## The math
-
-$$dS_t = \mu(X_t)\,S_t\,dt + \sigma\,S_t\,dW_t + S_{t-}\,dJ_t$$
-
-- Brownian $dW_t$: ambient noise
-- Drift $\mu(X_t)$: depends on weather, planted acreage, harvest pipeline, demand, elevator capacity
-- Jump $dJ_t$: fires on sabotage and god-tier events, intensity $\lambda(X_t)$
-
-CornCo stock tracks corn spot with idiosyncratic noise. European options Black-Scholes priced using realized vol. Market makers quote with the same model.
-
-## Game-end conditions
-
-1. Admin calls it
-2. Nuclear fallout fires
-3. All 5 market makers have blown up (market collapse)
-
-## End-of-game debrief
-
-Server replays event log, computes per-player stats, renders summary charts client-side, sends event log to LLM for a narrative recap (year-in-review essay naming names, revealing secret plays).
-
-**Awards:**
-- 👑 Most Profitable
-- 💀 Most Chaotic
-- 😇 Most Kind
-- 📉 Worst Trader
-- 🕵️ Best Schemer
-- 🌽 People's Champion
-- ☠️ Widowmaker (most MM blowups caused)
-- ☢️ World Ender (triggered nuclear fallout)
-- 🏢 Empire Builder (highest peak net worth)
-- 🦑 Kraken (most cash extracted via squeezes)
-- 🎯 David (biggest takedown of a monopolist while in bottom half)
-
-## Stack
-
-**Backend (Rust, single binary)**
-- `tokio`, `axum`, `tokio-tungstenite`
-- `serde`, `serde_json`
-- `rand`, `rand_distr`
-- `rust_decimal`
-- `reqwest` (Anthropic API)
-- `tracing`
-
-**Frontend (TypeScript)**
-- React + Vite
-- Three.js for the farm scene
-- Raw 2D canvas for the price chart
-- Plain CSS, no Tailwind, no UI library
-- `useReducer` + context for state
-
-**Infra**
-- One Dockerfile, multi-stage Rust build
-- AWS Lightsail ($3.50/mo instance) running Docker, Cloudflare proxy in front for TLS + DNS
-- Anthropic API: Haiku for headlines, Sonnet for debrief
-
-## Project structure
-
-```
-aura-farmers/
-├── README.md
-├── CLAUDE.md
-├── Dockerfile
-├── scripts/
-│   └── deploy.sh           # build, push, ssh into Lightsail, pull & restart
-├── server/                     # Rust backend
-│   ├── Cargo.toml
-│   └── src/
-│       ├── main.rs
-│       ├── config.rs
-│       ├── sim/
-│       │   ├── mod.rs          # cycle FSM
-│       │   ├── world.rs        # X_t state, holds all actors and assets
-│       │   ├── entities.rs     # Farm, Elevator, Actor enum
-│       │   ├── sde.rs          # Euler-Maruyama + jumps
-│       │   ├── actions.rs      # action types + resolver
-│       │   ├── aura.rs
-│       │   └── events.rs       # append-only event log
-│       ├── market/
-│       │   ├── book.rs         # order book
-│       │   ├── matching.rs
-│       │   ├── options.rs      # Black-Scholes
-│       │   └── portfolio.rs
-│       ├── agents/
-│       │   ├── mod.rs          # Agent trait
-│       │   ├── noise.rs
-│       │   ├── momentum.rs
-│       │   ├── reversion.rs
-│       │   ├── fundamental.rs
-│       │   ├── market_maker.rs # day traders + blowup logic
-│       │   └── npc_owner.rs    # autopilot for NPC farm/elevator owners
-│       ├── corp/
-│       │   ├── mod.rs          # tier detection
-│       │   ├── actions.rs      # acquire, takeover, dump, corner
-│       │   └── squeeze.rs
-│       ├── net/
-│       │   ├── gateway.rs      # axum WS handler
-│       │   ├── protocol.rs     # serde message types
-│       │   ├── session.rs
-│       │   └── admin.rs
-│       └── llm/
-│           ├── narrator.rs     # per-cycle headlines (Haiku)
-│           └── debrief.rs      # year-in-review (Sonnet)
-└── client/                     # React frontend
-    ├── package.json
-    ├── vite.config.ts
-    ├── tsconfig.json
-    ├── index.html
-    └── src/
-        ├── main.tsx
-        ├── App.tsx
-        ├── ws/
-        │   ├── client.ts
-        │   └── protocol.ts
-        ├── state/store.ts
-        ├── scene/
-        │   ├── Scene.tsx
-        │   ├── farm.ts
-        │   └── effects.ts
-        ├── chart/
-        │   ├── PriceChart.tsx
-        │   └── draw.ts
-        ├── ui/
-        │   ├── OrderForm.tsx
-        │   ├── OptionChain.tsx
-        │   ├── Portfolio.tsx
-        │   ├── ActionMenu.tsx
-        │   ├── AuraMeter.tsx
-        │   ├── Headlines.tsx
-        │   ├── CycleTimer.tsx
-        │   └── AdminPanel.tsx
-        └── debrief/
-            ├── Debrief.tsx
-            └── charts.ts
-```
-
-## Build order
-
-1. Rust: order book + matching, unit-tested
-2. Rust: SDE loop on stub world state, broadcast over WS
-3. React + Vite: connect, render price chart, place a market order
-4. Rust: cycle FSM (Decision → Resolve), 20s timer, action queue
-5. React: action menu, cycle timer, portfolio panel
-6. Rust: world entities — `Farm`, `Elevator`, `Actor` enum; 5 NPC farm owners + 2 NPC industrialists at world init
-7. Rust: world state mutations — plant, harvest, hire worker, burn farm, hitman (worker + owner variants)
-8. React + Three.js: farm scene rendering farms with field tiles and worker counts, click to interact
-9. Rust: 100 abstract market traders (noise, momentum, reversion, fundamental, 5 market makers with blowup detection)
-10. Rust: NPC owner autopilot (npc_owner.rs) — they hire, plant, harvest, sell, occasionally hedge
-11. Rust: option chain + Black-Scholes + portfolio MtM
-12. React: option chain UI
-13. Rust: aura system + god-tier actions
-14. Rust: corporate tiers + squeeze mechanics + antitrust events
-15. Rust: narrator (Anthropic API, per-cycle, async)
-16. React: headlines ticker
-17. Rust: admin commands + debrief generation
-18. React: debrief screen with charts and awards
-19. Deploy to AWS Lightsail, Cloudflare DNS + proxy (Flexible SSL)
-
-## Key design principles
-
-1. **The chart is alive** — prices move because of player actions, not just RNG
-2. **Information asymmetry is the game** — trade on what you can infer from price and headlines
-3. **Numbers are hidden, consequences are visible** — no probability bars, no live leaderboards
-4. **The debrief is the payoff** — playing blind makes the reveal hit harder
-5. **Roles create identity, not gates** — anyone can do anything chaotic
-6. **Cash and aura are orthogonal power axes** — wealth unlocks empire, aura unlocks chaos
-7. **Admin runs the show** — cycle length, aura economy, game end are tunable
+Deployed at: **farm.tarangjanawalkar.com** (Cloudflare → AWS Lightsail, port 80)
 
 ---
 
-**Wait for my greenlight before coding. When I tell you a build step, ask any clarifying questions, then proceed.**
+## Current implementation status
+
+Everything below is **built and working** unless noted otherwise.
+
+### Server (Rust)
+
+| Module | What's there |
+|---|---|
+| `sim/mod.rs` | Cycle FSM: lobby wait loop → decision phase → resolution phase. Ticker fires every `cycle_duration_secs` (default 20s, admin-tunable). Early advance when all players lock in. Broadcasts state on every transition. |
+| `sim/world.rs` | Full world state: farms, mills, NPC owners, player portfolios, order book, aura, locked_in set, price history, SDE parameters. Seeded RNG — deterministic given same seed + same action sequence. |
+| `sim/actions.rs` | All `PlayerAction` variants (farm ops, orders, options, chaos, god-tier, `NoOp`). All `AdminCommand` variants (`StartGame`, `EndGame`, `PauseGame`, `ResumeGame`, `SetCycleSecs`, `KickPlayer`, `ResetGame`). |
+| `sim/entities.rs` | `Farm`, `Mill`, `NpcOwner` types. |
+| `sim/events.rs` | `GameEvent` enum — append-only per-cycle log. |
+| `sim/aura.rs` | Aura accumulation + spend logic. |
+| `market/book.rs` | Order book (price-time priority). `total_bid_depth()`, `total_ask_depth()`. |
+| `market/matching.rs` | Continuous order matching. |
+| `market/options.rs` | Black-Scholes pricing. |
+| `market/portfolio.rs` | Portfolio + `net_worth()` with options MtM. |
+| `agents/` | 100 anonymous market traders: 40 noise, 25 momentum, 20 mean-reversion, 10 fundamental, 5 market makers with blowup detection. |
+| `corp/` | Wealth tier detection, `DumpShares`, `CornerMarket`. Squeeze mechanics are partial — framework exists, not fully connected to events. |
+| `net/gateway.rs` | axum WebSocket handler. New connections receive the full snapshot Vec (all current state messages). Ping frame every 30s to keep Cloudflare alive (100s idle timeout). |
+| `net/protocol.rs` | All `ServerMsg` and `ClientMsg` types. See **Protocol** section below. |
+| `llm/narrator.rs` | `generate()` → Haiku per-cycle headline. `generate_feedback()` → Haiku private per-player coaching. `generate_admin_summary()` → Sonnet admin summary with rolling context. All fire-and-forget via `tokio::spawn`. |
+
+### Client (React + Vite)
+
+| File | What's there |
+|---|---|
+| `App.tsx` | Root. Routing + all context providers. Host session via `sessionStorage`. Game code via `localStorage`. Detects `game_reset` while host → clears session, navigates to `/create`. Host routed to `DebriefScreen` on `game_over`. |
+| `router/index.ts` | Hash-free client-side routing. Routes: `/` `/join` `/create` `/host` `/{4-digit-code}`. `useNavigate()` hook. |
+| `state/store.ts` | `GameState`, `GameAction`, `reducer`. `useGameState()`, `useGameDispatch()`, `useWsSend()` hooks. |
+| `ws/protocol.ts` | Mirror of `server/src/net/protocol.rs`. Keep in sync by hand. |
+| `ws/useWs.ts` | WebSocket connection management. |
+| `ui/CreateScreen.tsx` | Host creates game. Shows join URL + live player waiting list (`knownPlayers`). |
+| `ui/HostScreen.tsx` | Host view: price chart, player list with kick, AI summaries, pause/resume, end game. Start Game button in lobby. |
+| `ui/JoinScreen.tsx` | Enter 4-digit game code. Pre-fills from `localStorage` if a game is active. |
+| `ui/LobbyScreen.tsx` | Enter name + role, send join WS message with client nonce. |
+| `ui/WaitingScreen.tsx` | Shown to players in lobby phase after joining — "Waiting for host to start…". |
+| `ui/GameScreen.tsx` | 5-tab layout: **Farm** (Farmer only) \| **Market** \| **Options** \| **Chaos** \| **God**. Lock-in flow: action buttons select locally (no WS send), sticky "Lock In" / "Take No Action" bar at bottom sends ONE message. All buttons disabled once locked. Big countdown timer. |
+| `ui/DebriefScreen.tsx` | Leaderboard, market stats, season headlines. "New Game" button for host clears session and goes to `/create`. |
+| `ui/PriceChart.tsx` | Canvas-based price history chart. |
+
+---
+
+## Game flow
+
+```
+Host opens /create
+  → WS connects, server assigns host gameCode
+  → Host clicks "Watch as Host →" (sets sessionStorage SS_HOST)
+  → CreateScreen shows join URL + player waiting list
+
+Players open /{code}
+  → Enter name + role on LobbyScreen
+  → Join WS with client nonce → server sends Welcome (claimed by matching nonce only)
+  → WaitingScreen: "Waiting for host to start…"
+
+Host clicks "Start Game"
+  → AdminCommand::StartGame → server exits 'lobby loop, enters 'game loop
+  → Players transition to GameScreen (decision phase)
+
+Each cycle:
+  1. Decision phase (countdown timer)
+     - Players select action on GameScreen (local state, no WS send)
+     - "Lock In" sends ONE action message; "Take No Action" sends NoOp
+     - If ALL players locked in → cycle advances immediately
+     - Timer expiry also advances the cycle
+  2. Resolution phase
+     - Server resolves all actions, advances SDE, NPCs trade
+     - Full state broadcast (+ snapshot update for reconnectors)
+     - LLM tasks fire in background (headlines, feedback, admin summary)
+  3. Repeat until game_over
+
+Host ends game:
+  → AdminCommand::EndGame → server sends GameOver + Debrief
+  → Host (and players) see DebriefScreen
+  → Host clicks "New Game" → clears SS_HOST, navigates to /create
+
+Admin reset mid-game:
+  → AdminCommand::ResetGame → server sends GameReset
+  → Host tab detects resetCount increment, clears session, navigates to /create
+  → Player tabs return to pre-join state
+```
+
+---
+
+## Protocol
+
+**Key ServerMsg types:**
+
+| Message | When sent | Key fields |
+|---|---|---|
+| `welcome` | After join | `player_id`, `name`, `role`, `client_nonce` |
+| `cycle_phase` | Phase transition | `phase` (lobby/decision/resolving), `cycle`, `seconds_remaining` |
+| `price_update` | After each order match | `price`, `history`, `bid_depth`, `ask_depth`, `cycle_volume` |
+| `world_snapshot` | After resolution | `farms`, `mills`, `npc_owners` |
+| `cycle_events` | After resolution | `events: GameEvent[]` |
+| `player_state` | After resolution (per player) | `player_id`, `cash`, `shares`, `aura`, `net_worth`, `options` |
+| `player_roster` | On join + reconnect | `players: [{player_id, name, role}]` |
+| `player_feedback` | After resolution (Haiku) | `player_id`, `tips` |
+| `headline` | After resolution (Haiku) | `text`, `cycle` |
+| `admin_summary` | After resolution (Sonnet) | `text`, `cycle` |
+| `debrief` | On game_over | `stats: DebriefStats` |
+| `game_reset` | On admin reset | — |
+| `game_paused` / `game_resumed` | Admin pause | `seconds_remaining` on resume |
+| `kicked` | Admin kick | `player_id`, `reason` |
+
+**Snapshot Vec:** On WS connect, the server replays the entire current snapshot (CyclePhase + PriceUpdate + WorldSnapshot + CycleEvents + PlayerRoster + PlayerState×N) so reconnecting clients and the host are immediately in sync.
+
+---
+
+## Roles
+
+**Farmer** — starts with 1 farm, 3 fields, 2 workers. Income from farm operations. Farm tab visible.
+
+**Trader** — no land. Extra cash. Income from speculation. Farm tab hidden.
+
+Both roles have access to Market, Options, Chaos, and God tabs. Role only restricts the farm operations tab.
+
+---
+
+## Aura
+
+- Accumulates +10 base per cycle (auto, no action needed)
+- `NoOp` / "Take No Action" preserves aura (same as passing)
+- God-tier actions spend aura: Bumper Harvest (60), Drought (80), Market Panic (100), Famine (150), Nuclear Fallout (300)
+- Chaos actions also spend aura: Hitman Worker (15), Burn Farm (20), Burn Mill (25), Hitman Owner (50), Spread Rumor (5)
+
+---
+
+## Session handling
+
+- `sessionStorage["aura_is_host"]` — per-tab host flag. Cleared on game_reset or "New Game".
+- `localStorage["aura_game_code"]` — shared across tabs so JoinScreen pre-fills the active code.
+- `state.resetCount` — integer in GameState, increments on every `game_reset`. App.tsx watches it; if it increments while `isHost`, clears the session and navigates to `/create`.
+
+---
+
+## Infrastructure
+
+**Deploy:**
+```bash
+./scripts/deploy.sh
+```
+Builds `linux/amd64` Docker image locally, streams via SSH to Lightsail, restarts container on port 80.
+
+**Requirements:**
+- `AWS_PROFILE=personal` (or set `AWS_PROFILE` env var)
+- SSH key at `~/.ssh/lightsail/aura-farmers` (or set `SSH_KEY_PATH`)
+- Docker running locally
+- Terraform state initialized (`terraform -chdir=terraform init`)
+
+**Architecture:**
+- Lightsail instance → Docker container → port 80
+- Cloudflare proxy in front → HTTPS termination (Flexible SSL) → origin on port 80
+- Env vars read from `/app/.env` on the instance (created by `provision-infrastructure.sh`)
+- `ANTHROPIC_API_KEY` in `.env` enables LLM features; empty key disables them gracefully
+
+---
+
+## What's NOT built yet
+
+- Three.js farm scene (farms visible only as data in the UI, not rendered 3D)
+- Store inventory action (corn can be sold but not held speculatively for later cycles via explicit UI)
+- Buy Research action
+- Full antitrust event system
+- Detailed per-award computation (debrief has leaderboard + market stats, not the full awards table)
+- Net worth curves over time (only final snapshot in debrief)
+- Short selling UI (order book supports it but no dedicated button)
+
+---
+
+## Key invariants — do not break
+
+1. **Sim is single-threaded and deterministic.** All RNG goes through `World.rng` (seeded). Never call `rand::thread_rng()` inside `sim/`, `market/`, `agents/`, or `corp/`.
+2. **One action per player per cycle.** `action_queue: HashMap<PlayerId, PlayerAction>` enforces this server-side. Client enforces via lock-in state.
+3. **Snapshot Vec must stay coherent.** `broadcast_all_state()` atomically rebuilds it. Every new WS connection receives the full Vec.
+4. **WS ping every 30s.** Required for Cloudflare (100s idle timeout). Lives in the send task in `net/gateway.rs`.
+5. **`f64` for SDE/vol/probabilities only.** All money is `rust_decimal::Decimal`.
+6. **Client nonce join.** Client generates nonce, sends with join, only claims the `welcome` that echoes its own nonce. Prevents one player's welcome from being claimed by another tab.

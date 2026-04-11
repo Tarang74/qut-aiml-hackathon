@@ -1,16 +1,18 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 
 /// Unique order identifier, monotonically increasing within a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OrderId(pub u64);
 
 /// Identifies any market participant — human player, named NPC, or abstract trader.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PlayerId(pub u64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Side {
     Bid,
     Ask,
@@ -26,22 +28,6 @@ pub struct Order {
     pub price: Option<Decimal>,
     /// Remaining unfilled quantity in shares.
     pub quantity: u32,
-}
-
-/// Aggregated view of one price level for display.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PriceLevel {
-    pub price: Decimal,
-    pub quantity: u32,
-}
-
-/// Top-of-book snapshot sent to the client HUD.
-#[derive(Debug, Clone)]
-pub struct BookDepth {
-    /// Best bid first (highest price).
-    pub bids: Vec<PriceLevel>,
-    /// Best ask first (lowest price).
-    pub asks: Vec<PriceLevel>,
 }
 
 /// Price-time priority limit order book for CornCo stock.
@@ -118,34 +104,22 @@ impl OrderBook {
         self.asks.keys().next().copied()
     }
 
-    /// Bid-ask spread, or `None` if either side is empty.
-    pub fn spread(&self) -> Option<Decimal> {
-        Some(self.best_ask()? - self.best_bid()?)
+    /// Total shares resting on the bid side.
+    pub fn total_bid_depth(&self) -> u32 {
+        self.bids
+            .values()
+            .flat_map(|q| q.iter())
+            .map(|o| o.quantity)
+            .sum()
     }
 
-    /// Snapshot of the top `n` price levels on each side.
-    pub fn depth(&self, n: usize) -> BookDepth {
-        BookDepth {
-            bids: self
-                .bids
-                .iter()
-                .rev()
-                .take(n)
-                .map(|(&price, q)| PriceLevel {
-                    price,
-                    quantity: q.iter().map(|o| o.quantity).sum(),
-                })
-                .collect(),
-            asks: self
-                .asks
-                .iter()
-                .take(n)
-                .map(|(&price, q)| PriceLevel {
-                    price,
-                    quantity: q.iter().map(|o| o.quantity).sum(),
-                })
-                .collect(),
-        }
+    /// Total shares resting on the ask side.
+    pub fn total_ask_depth(&self) -> u32 {
+        self.asks
+            .values()
+            .flat_map(|q| q.iter())
+            .map(|o| o.quantity)
+            .sum()
     }
 }
 
@@ -175,7 +149,6 @@ mod tests {
         let book = OrderBook::new();
         assert!(book.best_bid().is_none());
         assert!(book.best_ask().is_none());
-        assert!(book.spread().is_none());
     }
 
     #[test]
@@ -196,16 +169,6 @@ mod tests {
         let o2 = limit(&mut book, Side::Ask, dec!(101), 5);
         book.insert(o2);
         assert_eq!(book.best_ask(), Some(dec!(101)));
-    }
-
-    #[test]
-    fn spread_is_ask_minus_bid() {
-        let mut book = OrderBook::new();
-        let bid = limit(&mut book, Side::Bid, dec!(100), 10);
-        book.insert(bid);
-        let ask = limit(&mut book, Side::Ask, dec!(102), 10);
-        book.insert(ask);
-        assert_eq!(book.spread(), Some(dec!(2)));
     }
 
     #[test]
@@ -236,23 +199,22 @@ mod tests {
         book.insert(o2);
         assert!(book.cancel(id1));
         assert_eq!(book.best_bid(), Some(dec!(100)));
-        assert_eq!(book.depth(1).bids[0].quantity, 3);
+        assert_eq!(book.total_bid_depth(), 3);
     }
 
     #[test]
-    fn depth_aggregates_quantity_at_same_price() {
+    fn total_depth_aggregates_all_resting_shares() {
         let mut book = OrderBook::new();
         for qty in [5u32, 3, 7] {
             let o = limit(&mut book, Side::Bid, dec!(100), qty);
             book.insert(o);
         }
-        let depth = book.depth(5);
-        assert_eq!(depth.bids.len(), 1);
-        assert_eq!(depth.bids[0], PriceLevel { price: dec!(100), quantity: 15 });
+        assert_eq!(book.total_bid_depth(), 15);
+        assert_eq!(book.total_ask_depth(), 0);
     }
 
     #[test]
-    fn depth_bids_descending_asks_ascending() {
+    fn best_prices_reflect_book_extremes() {
         let mut book = OrderBook::new();
         for price in [dec!(98), dec!(100), dec!(99)] {
             let o = limit(&mut book, Side::Bid, price, 1);
@@ -262,10 +224,7 @@ mod tests {
             let o = limit(&mut book, Side::Ask, price, 1);
             book.insert(o);
         }
-        let depth = book.depth(3);
-        let bid_prices: Vec<_> = depth.bids.iter().map(|l| l.price).collect();
-        let ask_prices: Vec<_> = depth.asks.iter().map(|l| l.price).collect();
-        assert_eq!(bid_prices, vec![dec!(100), dec!(99), dec!(98)]);
-        assert_eq!(ask_prices, vec![dec!(101), dec!(102), dec!(103)]);
+        assert_eq!(book.best_bid(), Some(dec!(100)));
+        assert_eq!(book.best_ask(), Some(dec!(101)));
     }
 }

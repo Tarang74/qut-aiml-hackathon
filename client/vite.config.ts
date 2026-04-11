@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: true, // bind to 0.0.0.0 so phones on the same WiFi can reach the dev server
     // Proxy WebSocket connections to the running Rust backend so frontend
     // devs can use `npm run dev` with hot reload without rebuilding the image.
     proxy: {

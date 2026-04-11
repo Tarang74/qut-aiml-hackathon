@@ -1,22 +1,26 @@
-// Remove this once all modules are wired in.
-#![allow(dead_code)]
-
+mod agents;
 mod config;
+mod error;
+mod llm;
 mod market;
-
-use std::time::Duration;
+mod net;
+mod sim;
 
 use axum::{
-    Router,
-    extract::{
-        WebSocketUpgrade,
-        ws::{Message, WebSocket},
-    },
+    extract::{State, WebSocketUpgrade},
     response::IntoResponse,
     routing::get,
+    Router,
 };
-use tower_http::services::ServeDir;
+use tokio::sync::mpsc;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::EnvFilter;
+
+use net::gateway::AppState;
+use sim::world::World;
+
+/// Human player IDs start at 1001; abstract agents use 1–100, named NPCs 101–107.
+const PLAYER_ID_START: u64 = 1001;
 
 #[tokio::main]
 async fn main() {
@@ -24,14 +28,33 @@ async fn main() {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
+    // Channel: WS handlers → sim loop.
+    let (action_tx, action_rx) = mpsc::channel(256);
+
+    let state = AppState::new(256, action_tx, PLAYER_ID_START);
+
+    let mut world = World::new(cfg.game_seed);
+    world.cycle_duration_secs = cfg.cycle_secs;
+    tokio::spawn(sim::run_loop(
+        world,
+        state.broadcast_tx.clone(),
+        state.snapshot.clone(),
+        action_rx,
+        cfg.anthropic_api_key.clone(),
+        cfg.game_seed,
+    ));
+
+    // Serve the SPA: any path that isn't /ws and isn't a static asset gets
+    // index.html so the client-side router handles /create, /join, /1234, etc.
+    let spa_fallback = ServeFile::new(format!("{}/index.html", cfg.static_dir));
     let app = Router::new()
         .route("/ws", get(ws_handler))
-        .fallback_service(ServeDir::new(&cfg.static_dir));
+        .fallback_service(ServeDir::new(&cfg.static_dir).fallback(spa_fallback))
+        .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&cfg.bind_addr)
         .await
@@ -43,34 +66,6 @@ async fn main() {
     axum::serve(listener, app).await.expect("server error");
 }
 
-async fn ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(handle_socket)
-}
-
-/// Stub socket handler — accepts connections and keeps them alive with pings.
-/// Game logic will be wired in during later build steps.
-///
-/// Cloudflare Free plan silently drops WebSocket connections after 100 s of
-/// inactivity, so we ping every 30 s unconditionally.
-async fn handle_socket(mut socket: WebSocket) {
-    let mut ping_interval = tokio::time::interval(Duration::from_secs(30));
-    // Skip the immediate first tick so we don't ping before the client is ready.
-    ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    ping_interval.tick().await;
-
-    loop {
-        tokio::select! {
-            _ = ping_interval.tick() => {
-                if socket.send(Message::Ping(Default::default())).await.is_err() {
-                    return;
-                }
-            }
-            msg = socket.recv() => {
-                match msg {
-                    Some(Ok(_)) => {} // will dispatch to game logic in later steps
-                    _ => return,
-                }
-            }
-        }
-    }
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| net::gateway::handle_socket(socket, state))
 }

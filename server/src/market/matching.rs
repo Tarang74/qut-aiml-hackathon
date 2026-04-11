@@ -5,8 +5,6 @@ use super::book::{Order, OrderBook, OrderId, PlayerId, Side};
 /// A completed trade between a resting maker and an incoming taker.
 #[derive(Debug, Clone)]
 pub struct Fill {
-    pub maker_order_id: OrderId,
-    pub taker_order_id: OrderId,
     pub maker_player_id: PlayerId,
     pub taker_player_id: PlayerId,
     /// Execution price — always the resting maker's limit price.
@@ -54,8 +52,6 @@ fn fill_bid(book: &mut OrderBook, incoming: &mut Order, fills: &mut Vec<Fill>) {
         while let Some(maker) = queue.front_mut() {
             let qty = incoming.quantity.min(maker.quantity);
             fills.push(Fill {
-                maker_order_id: maker.id,
-                taker_order_id: incoming.id,
                 maker_player_id: maker.player_id,
                 taker_player_id: incoming.player_id,
                 price: ask_price,
@@ -110,8 +106,6 @@ fn fill_ask(book: &mut OrderBook, incoming: &mut Order, fills: &mut Vec<Fill>) {
         while let Some(maker) = queue.front_mut() {
             let qty = incoming.quantity.min(maker.quantity);
             fills.push(Fill {
-                maker_order_id: maker.id,
-                taker_order_id: incoming.id,
                 maker_player_id: maker.player_id,
                 taker_player_id: incoming.player_id,
                 price: bid_price,
@@ -218,7 +212,7 @@ mod tests {
         assert_eq!(fills[0].quantity, 4);
         // 6 units of the ask remain
         assert_eq!(book.best_ask(), Some(dec!(100)));
-        assert_eq!(book.depth(1).asks[0].quantity, 6);
+        assert_eq!(book.total_ask_depth(), 6);
     }
 
     #[test]

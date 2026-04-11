@@ -46,8 +46,9 @@ resource "aws_lightsail_static_ip_attachment" "main" {
 }
 
 # ── Firewall ─────────────────────────────────────────────────────────────────
-# Cloudflare proxies inbound traffic so only port 22 (SSH) and the app port
-# need to be open to the internet. TLS is terminated at Cloudflare.
+# Cloudflare proxies inbound traffic so only port 22 (SSH) and port 80 need
+# to be open. Cloudflare Flexible SSL connects to origin on port 80; the
+# Docker run maps 80 → app_port internally.
 
 resource "aws_lightsail_instance_public_ports" "main" {
   instance_name = aws_lightsail_instance.main.name
@@ -60,8 +61,8 @@ resource "aws_lightsail_instance_public_ports" "main" {
 
   port_info {
     protocol  = "tcp"
-    from_port = local.app_port
-    to_port   = local.app_port
+    from_port = 80
+    to_port   = 80
   }
 }
 
@@ -75,3 +76,15 @@ resource "cloudflare_record" "main" {
   type    = "A"
   proxied = true
 }
+
+# ── Cloudflare SSL mode ───────────────────────────────────────────────────────
+# "flexible" → Cloudflare terminates HTTPS from clients, then connects to
+# origin over plain HTTP. Origin has no TLS cert (Lightsail HTTP on app_port).
+
+resource "cloudflare_zone_settings_override" "main" {
+  zone_id = local.cloudflare_zone_id
+  settings {
+    ssl = "flexible"
+  }
+}
+

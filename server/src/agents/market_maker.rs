@@ -7,7 +7,7 @@ use super::{MarketAgent, PendingOrder, WorldView};
 use crate::market::book::{PlayerId, Side};
 
 /// Max single-cycle drawdown before a MM blows up (in Decimal dollars).
-const BLOWUP_THRESHOLD: f64 = 8_000.0;
+const BLOWUP_THRESHOLD: f64 = 80_000.0;
 
 /// Day-trader market maker: quotes both sides simultaneously to earn the
 /// spread.  Tracks inventory and PnL.  Blows up on catastrophic drawdown.
@@ -25,9 +25,9 @@ impl MarketMakerAgent {
     pub fn new(id: PlayerId, name: &str) -> Self {
         Self {
             id,
-            cash: 20_000.0,
+            cash: 200_000.0,
             shares: 0,
-            cycle_start_nav: 20_000.0,
+            cycle_start_nav: 200_000.0,
             blown_up: false,
             name: name.to_string(),
         }
@@ -77,8 +77,8 @@ impl MarketAgent for MarketMakerAgent {
         let bid_price = view.price * (1.0 - half_spread - inventory_skew);
         let ask_price = view.price * (1.0 + half_spread - inventory_skew);
 
-        // Size: 1–3 shares per side — thin book so player trades move price.
-        let size = rng.random_range(1u32..=3);
+        // Size: 10–30 shares per side.
+        let size = rng.random_range(10u32..=30);
 
         let bid_d = Decimal::from_f64(bid_price).unwrap_or(Decimal::ONE_HUNDRED);
         let ask_d = Decimal::from_f64(ask_price).unwrap_or(Decimal::ONE_HUNDRED);

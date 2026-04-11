@@ -186,4 +186,6 @@ pub enum ClientMsg {
     Admin { command: AdminCommand },
     /// Keep-alive (no-op, client-side ping).
     Ping,
+    /// Player voluntarily leaves the game — removes them from the world.
+    Leave,
 }

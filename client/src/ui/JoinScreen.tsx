@@ -1,23 +1,31 @@
 /**
- * JoinScreen — / and /join
+ * JoinScreen — /join
  *
- * Shows active game if one exists (gameCode in state), otherwise shows a code
- * entry form so players can paste the link or type the code manually.
+ * Shows active public game (fetched from /api/lobby) if one is available,
+ * plus a code-entry form for direct joins.
  */
-import { useReducer } from "react";
+import { useEffect, useReducer } from "react";
 import { useNavigate } from "../router";
-import { useGameState } from "../state/store";
+
+interface LobbyInfo {
+  phase: string;
+  player_count: number;
+  game_code: string | null;
+  is_public: boolean;
+}
 
 interface LocalState {
   value: string;
   error: string | null;
   showManual: boolean;
+  lobby: LobbyInfo | null;
 }
 
 type LocalAction =
   | { type: "set_value"; value: string }
   | { type: "set_error"; msg: string }
-  | { type: "show_manual" };
+  | { type: "show_manual" }
+  | { type: "set_lobby"; lobby: LobbyInfo };
 
 function localReducer(state: LocalState, action: LocalAction): LocalState {
   switch (action.type) {
@@ -27,16 +35,34 @@ function localReducer(state: LocalState, action: LocalAction): LocalState {
       return { ...state, error: action.msg };
     case "show_manual":
       return { ...state, showManual: true };
+    case "set_lobby":
+      return { ...state, lobby: action.lobby };
   }
 }
 
 export default function JoinScreen() {
   const navigate = useNavigate();
-  const { gameCode, phase, cycle, knownPlayers } = useGameState();
-  const [local, dispatch] = useReducer(localReducer, { value: "", error: null, showManual: false });
+  const [local, dispatch] = useReducer(localReducer, {
+    value: "",
+    error: null,
+    showManual: false,
+    lobby: null,
+  });
 
-  const hasActiveGame = gameCode !== null;
-  const gameIsLive = phase === "decision" || phase === "resolving";
+  useEffect(() => {
+    fetch("/api/lobby")
+      .then((r) => r.json())
+      .then((data: LobbyInfo) => {
+        if (data.game_code && data.is_public) {
+          dispatch({ type: "set_lobby", lobby: data });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const { lobby } = local;
+  const hasLobby = lobby !== null;
+  const gameIsLive = lobby?.phase === "decision" || lobby?.phase === "resolving";
 
   function handleSubmit() {
     if (local.value.length !== 4) {
@@ -51,28 +77,30 @@ export default function JoinScreen() {
       <h1 style={s.title}>🌽 Aura Farmers</h1>
 
       {/* ── Active game card ──────────────────────────────────────────────── */}
-      {hasActiveGame && (
+      {hasLobby && (
         <div style={s.gameCard}>
           <div style={s.gameCardTop}>
             <span style={{ ...s.dot, background: gameIsLive ? "#7ec87e" : "#e0b84b" }} />
             <span style={s.gameStatus}>
-              {gameIsLive ? `Game in progress — Cycle ${cycle}` : "Game lobby open"}
+              {gameIsLive
+                ? `Game in progress — Cycle ${lobby?.phase}`
+                : "Game lobby open"}
             </span>
           </div>
-          {knownPlayers.length > 0 && (
-            <p style={s.playerCount}>{knownPlayers.length} player{knownPlayers.length !== 1 ? "s" : ""} in game</p>
-          )}
-          <button style={s.joinBtn} onClick={() => navigate(`/${gameCode}`)}>
+          <p style={s.playerCount}>
+            {lobby!.player_count} player{lobby!.player_count !== 1 ? "s" : ""} in game
+          </p>
+          <button style={s.joinBtn} onClick={() => navigate(`/${lobby!.game_code}`)}>
             Join Game →
           </button>
         </div>
       )}
 
       {/* ── Manual code entry ─────────────────────────────────────────────── */}
-      {(!hasActiveGame || local.showManual) ? (
+      {(!hasLobby || local.showManual) ? (
         <div style={s.form}>
-          {hasActiveGame && <p style={s.orDivider}>— or enter a different code —</p>}
-          {!hasActiveGame && <p style={s.sub}>Enter your room code to join a game.</p>}
+          {hasLobby && <p style={s.orDivider}>— or enter a different code —</p>}
+          {!hasLobby && <p style={s.sub}>Enter your room code to join a game.</p>}
           <input
             style={s.codeInput}
             value={local.value}
@@ -81,7 +109,7 @@ export default function JoinScreen() {
             maxLength={4}
             onChange={(e) => dispatch({ type: "set_value", value: e.target.value })}
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-            autoFocus={!hasActiveGame}
+            autoFocus={!hasLobby}
           />
           {local.error && <p style={s.error}>{local.error}</p>}
           <button

@@ -192,4 +192,5 @@ export type ClientMsg =
   | { type: "join"; name: string; role: Role; client_nonce: string }
   | { type: "action"; action: PlayerAction }
   | { type: "admin"; command: AdminCommand }
-  | { type: "ping" };
+  | { type: "ping" }
+  | { type: "leave" };

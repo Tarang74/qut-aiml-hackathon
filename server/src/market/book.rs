@@ -28,6 +28,8 @@ pub struct Order {
     pub price: Option<Decimal>,
     /// Remaining unfilled quantity in shares.
     pub quantity: u32,
+    /// Game cycle when this order was placed — used to expire stale resting orders.
+    pub placed_at_cycle: u64,
 }
 
 /// Price-time priority limit order book for CornCo stock.
@@ -94,6 +96,23 @@ impl OrderBook {
         true
     }
 
+    /// Remove all resting orders placed more than `max_age` cycles ago.
+    /// Called at the start of each cycle instead of wiping the whole book.
+    pub fn prune_stale(&mut self, current_cycle: u64, max_age: u64) {
+        let cutoff = current_cycle.saturating_sub(max_age);
+        let stale: Vec<OrderId> = self
+            .bids
+            .values()
+            .chain(self.asks.values())
+            .flat_map(|q| q.iter())
+            .filter(|o| o.placed_at_cycle < cutoff)
+            .map(|o| o.id)
+            .collect();
+        for id in stale {
+            self.cancel(id);
+        }
+    }
+
     /// Best (highest) bid price, or `None` if the bid side is empty.
     pub fn best_bid(&self) -> Option<Decimal> {
         self.bids.keys().next_back().copied()
@@ -141,6 +160,7 @@ mod tests {
             side,
             price: Some(price),
             quantity: qty,
+            placed_at_cycle: 0,
         }
     }
 

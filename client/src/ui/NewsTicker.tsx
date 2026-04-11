@@ -18,7 +18,21 @@ export default function NewsTicker() {
   const headlineTexts = headlines.map((h) => `📰 ${h.text}`);
 
   const items = [...rumors, ...headlineTexts];
-  if (items.length === 0) return null;
+
+  // Always render the bar so the host layout reserves the right space.
+  // When empty show a static placeholder; once headlines arrive, start the crawl.
+  if (items.length === 0) {
+    return (
+      <div style={s.bar}>
+        <span style={s.badge}>LIVE</span>
+        <div style={s.track}>
+          <span style={{ ...s.text, color: "#c8a070" }}>
+            Waiting for first cycle to complete…
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   // Repeat content so the crawl loops without a visible gap.
   const content = [...items, ...items].join("     ·     ");

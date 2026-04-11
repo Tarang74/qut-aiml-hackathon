@@ -19,7 +19,7 @@ use crate::market::portfolio::Portfolio;
 
 pub const HISTORY_LEN: usize = 300;
 const INITIAL_PRICE: f64 = 100.0;
-/// Player IDs 1–100 are abstract market agents; 101–107 are named NPCs.
+/// Player IDs 1–1000 are abstract market agents; 1001–1007 are named NPCs; ≥2001 are human players.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CyclePhase {
@@ -192,6 +192,11 @@ impl World {
     // ── Player registration ───────────────────────────────────────────────────
 
     pub fn register_player(&mut self, id: PlayerId, name: String, role: Role) {
+        // Reconnect: player already in world — preserve their existing state.
+        if self.players.contains_key(&id) {
+            return;
+        }
+
         let mut state = PlayerState::new(id, name.clone(), role);
 
         // Assign starting physical assets.
@@ -240,8 +245,8 @@ impl World {
     pub fn resolve_cycle(&mut self) -> Vec<GameEvent> {
         let mut events: Vec<GameEvent> = Vec::new();
 
-        // Fresh book every cycle — stale resting orders don't carry over.
-        self.book = OrderBook::new();
+        // Expire orders older than 2 cycles — keeps the book live without wiping it.
+        self.book.prune_stale(self.cycle, 2);
         self.cycle_volume = 0;
         self.locked_in.clear();
 
@@ -397,6 +402,7 @@ impl World {
                     side,
                     price,
                     quantity,
+                    placed_at_cycle: self.cycle,
                 };
                 let fills = matching::match_order(&mut self.book, order);
                 for fill in &fills {
@@ -896,6 +902,7 @@ impl World {
                     side: Side::Ask,
                     price: None, // market order
                     quantity: qty,
+                    placed_at_cycle: self.cycle,
                 };
                 let fills = matching::match_order(&mut self.book, order);
                 for fill in &fills {
@@ -913,6 +920,7 @@ impl World {
                     side: Side::Bid,
                     price: None,
                     quantity: qty,
+                    placed_at_cycle: self.cycle,
                 };
                 let fills = matching::match_order(&mut self.book, order);
                 for fill in &fills {
@@ -982,6 +990,7 @@ impl World {
                 side: po.side,
                 price: po.price,
                 quantity: po.quantity,
+                placed_at_cycle: self.cycle,
             };
             matching::match_order(&mut self.book, order);
         }
@@ -1020,12 +1029,12 @@ impl World {
     fn spawn_abstract_agents(&mut self) {
         use crate::agents::market_maker::MarketMakerAgent;
 
-        // 3 thin market makers — provide just enough two-sided liquidity for
-        // players to trade against, without overwhelming player price impact.
-        let mm_names = ["Atlas", "Bravo", "Cipher"];
-        for (i, name) in (1..=3u64).zip(mm_names) {
+        // 1000 anonymous market makers — provide deep two-sided liquidity.
+        // IDs 1–1000 reserved for abstract traders; named NPCs start at 1001.
+        for i in 1u64..=1000 {
+            let name = format!("MM-{i:04}");
             self.market_agents
-                .push(Box::new(MarketMakerAgent::new(PlayerId(i), name)));
+                .push(Box::new(MarketMakerAgent::new(PlayerId(i), &name)));
         }
     }
 
@@ -1110,7 +1119,7 @@ impl World {
         for (i, &(name, fields, workers)) in npc_data.iter().enumerate() {
             let npc_id = NpcId(self.next_npc_id);
             self.next_npc_id += 1;
-            let player_id = PlayerId(101 + i as u64);
+            let player_id = PlayerId(1001 + i as u64);
             let farm_id = self.new_farm(player_id, fields, workers);
             let npc = NpcOwner::new_farmer(npc_id, player_id, name, farm_id);
             self.npc_owners.insert(npc_id, npc);
@@ -1122,7 +1131,7 @@ impl World {
         for (i, &name) in mill_owner_data.iter().enumerate() {
             let npc_id = NpcId(self.next_npc_id);
             self.next_npc_id += 1;
-            let player_id = PlayerId(106 + i as u64);
+            let player_id = PlayerId(1006 + i as u64);
             let mill_id = self.new_mill(player_id, 200);
             let npc = NpcOwner::new_mill_owner(npc_id, player_id, name, mill_id);
             self.npc_owners.insert(npc_id, npc);

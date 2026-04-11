@@ -8,6 +8,7 @@
 import { useReducer } from "react";
 import { useNavigate } from "../router";
 import { useGameDispatch, useGameState } from "../state/store";
+import QRCode from "./QRCode";
 
 interface LocalState {
   code: string | null;
@@ -45,7 +46,7 @@ export default function CreateScreen() {
         </button>
       ) : (
         <div style={styles.codeBlock}>
-          <img src="/qr-code.png" alt="Scan to join" style={styles.qrImg} />
+          <QRCode value={`${window.location.origin}/${local.code}`} style={styles.qrImg} />
           <div style={styles.code}>{local.code}</div>
           <p style={styles.hint}>Enter this code on the join page</p>
 
@@ -80,8 +81,15 @@ export default function CreateScreen() {
             <button
               style={styles.btn}
               onClick={() => {
-                gameDispatch({ type: "set_host" });
-                navigate("/host");
+                // Register host session on server so cookie is set and /host survives reload.
+                fetch("/api/session/host", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ game_code: local.code }),
+                }).finally(() => {
+                  gameDispatch({ type: "set_host" });
+                  navigate("/host");
+                });
               }}
             >
               Watch as Host →

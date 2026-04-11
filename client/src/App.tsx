@@ -2,8 +2,8 @@
  * App — root component.
  *
  * Routing (pre-join):
- *   /         → JoinScreen   (enter code)
- *   /join     → JoinScreen
+ *   /         → WelcomeScreen
+ *   /join     → JoinScreen   (enter code + lobby list)
  *   /create   → CreateScreen (admin: generate code)
  *   /{4 digits} → LobbyScreen (name + role, then join WS)
  *
@@ -31,31 +31,55 @@ import GameScreen from "./ui/GameScreen";
 import WaitingScreen from "./ui/WaitingScreen";
 import SummaryScreen from "./ui/SummaryScreen";
 import DebriefScreen from "./ui/DebriefScreen";
+import WelcomeScreen from "./ui/WelcomeScreen";
 import NewsTicker from "./ui/NewsTicker";
 import EmojiConfetti from "./ui/EmojiConfetti";
 import EventBanner from "./ui/EventBanner";
 
 // isHost uses sessionStorage (per-tab) so two tabs on the same machine can have
 // one as host and one as player without colliding.
-// gameCode uses localStorage (cross-tab) so players see the active game on JoinScreen.
 const SS_HOST = "aura_is_host";
-const LS_CODE = "aura_game_code";
+
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE, (init) => ({
     ...init,
     isHost: sessionStorage.getItem(SS_HOST) === "1",
-    gameCode: localStorage.getItem(LS_CODE) ?? null,
   }));
   const [route, navigate] = useRouteState();
 
-  // isHost: per-tab (sessionStorage) so a second tab on the same machine can join as player.
+  // ── One-time migration: remove old localStorage key that caused auto-redirects ─
+  useEffect(() => {
+    localStorage.removeItem("aura_game_code");
+  }, []);
+
+  // ── Session restoration on mount ─────────────────────────────────────────
+  // Read the server session so host tabs survive reload and players reconnect.
+  useEffect(() => {
+    fetch("/api/session")
+      .then((r) => r.json())
+      .then((data: { type: string; game_code?: string; session_id?: string }) => {
+        if (data.type === "host") {
+          dispatch({ type: "set_host" });
+          if (data.game_code) {
+            dispatch({ type: "set_game_code", code: data.game_code });
+          }
+        } else if (data.type === "player" && data.session_id) {
+          // Set nonce = session_id so the auto-sent Welcome can be claimed.
+          dispatch({ type: "set_join_nonce", nonce: data.session_id });
+        }
+      })
+      .catch(() => {
+        // Server unreachable — ignore.
+      });
+  }, []);
+
+  // isHost: per-tab (sessionStorage).
   useEffect(() => {
     sessionStorage.setItem(SS_HOST, state.isHost ? "1" : "0");
   }, [state.isHost]);
 
-  // When game_reset fires while this tab is the host, clear the stale session and
-  // return to /create so the host must start a fresh game.
+  // When game_reset fires while this tab is the host, clear session and go to /create.
   const lastResetCount = useRef(state.resetCount);
   useEffect(() => {
     if (state.resetCount > lastResetCount.current && state.isHost) {
@@ -66,47 +90,38 @@ export default function App() {
     lastResetCount.current = state.resetCount;
   }, [state.resetCount]);
 
-  // gameCode: shared across tabs (localStorage) so JoinScreen can show the active game.
-  useEffect(() => {
-    if (state.gameCode) localStorage.setItem(LS_CODE, state.gameCode);
-  }, [state.gameCode]);
+  // Keep navigate stable inside callbacks without re-creating them on every render
+  const navigateRef = useRef(navigate);
+  useEffect(() => { navigateRef.current = navigate; }, [navigate]);
 
   const onMessage = useCallback(
     (msg: ServerMsg) => dispatch({ type: "server_msg", msg }),
     [],
   );
   const onConnect = useCallback(() => dispatch({ type: "ws_connected" }), []);
-  const onDisconnect = useCallback(() => dispatch({ type: "ws_disconnected" }), []);
+  const onDisconnect = useCallback(() => {
+    // Server restart invalidates the in-memory session store.
+    // Clear the cookie and reset identity so the user lands back on the home screen.
+    document.cookie = "aura_session=; Max-Age=0; Path=/";
+    sessionStorage.removeItem(SS_HOST);
+    dispatch({ type: "ws_disconnected" });
+    dispatch({ type: "clear_host" });
+    dispatch({ type: "leave_game" });
+    navigateRef.current("/");
+  }, []);
   const send = useWs(onMessage, onConnect, onDisconnect);
 
-  // If the player hits / or /join and there's an active game code, skip the
-  // code-entry step and land directly on the join form.
-  useEffect(() => {
-    if (
-      (route.page === "home" || route.page === "join") &&
-      !state.isHost &&
-      state.myPlayerId === null &&
-      state.gameCode
-    ) {
-      navigate(`/${state.gameCode}`);
-    }
-  }, [route.page, state.gameCode, state.isHost, state.myPlayerId]);
-
-  // ── Screen selection ──────────────────────────────────────────────────────
+  // ── Screen selection ───────────────────────────────────────────────────────
 
   let screen: React.ReactNode;
 
   if (state.isHost) {
-    // Host/spectator view — only reachable by clicking "Watch as Host →" in CreateScreen.
-    // sessionStorage ensures this persists across reloads but not into new tabs.
-    // After game ends, show the shared debrief screen so host can review results then quit.
     if (state.phase === "game_over") {
       screen = <DebriefScreen />;
     } else {
       screen = <HostScreen />;
     }
   } else if (state.myPlayerId !== null) {
-    // Already joined as a player — ignore the URL.
     if (state.phase === "game_over") {
       screen = <DebriefScreen />;
     } else if (state.phase === "lobby") {
@@ -117,22 +132,23 @@ export default function App() {
       screen = <GameScreen />;
     }
   } else {
-    // Pre-join: route by URL.
     switch (route.page) {
       case "create":
         screen = <CreateScreen />;
         break;
       case "host":
-        // /host typed directly without going through /create — send to CreateScreen.
         screen = <CreateScreen />;
         break;
       case "code":
         screen = <LobbyScreen code={route.code} />;
         break;
       case "join":
+        screen = <JoinScreen />;
+        break;
+      case "welcome":
       case "home":
       default:
-        screen = <JoinScreen />;
+        screen = <WelcomeScreen />;
         break;
     }
   }

@@ -7,6 +7,7 @@ pub mod world;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use dashmap::DashMap;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{sleep_until, Instant};
 
@@ -22,10 +23,18 @@ fn broadcast_msg(tx: &broadcast::Sender<Arc<String>>, msg: &ServerMsg) {
     }
 }
 
+/// Send a pre-serialised message to a specific player via their personal channel.
+fn send_targeted(
+    senders: &DashMap<u64, mpsc::UnboundedSender<Arc<String>>>,
+    player_id: u64,
+    json: Arc<String>,
+) {
+    if let Some(tx) = senders.get(&player_id) {
+        let _ = tx.send(json);
+    }
+}
+
 /// Broadcast a full state snapshot and atomically replace the reconnect snapshot.
-///
-/// The snapshot is sent to every new WebSocket connection so clients that
-/// reconnect mid-game (including the host) immediately see current state.
 fn broadcast_all_state(
     world: &World,
     tx: &broadcast::Sender<Arc<String>>,
@@ -42,7 +51,6 @@ fn broadcast_all_state(
         }
     };
 
-    // Include current phase so reconnecting clients know whether the game has started.
     let phase_str = match world.phase {
         CyclePhase::Lobby => "lobby",
         CyclePhase::Decision => "decision",
@@ -70,7 +78,6 @@ fn broadcast_all_state(
         cycle: world.cycle,
         events: cycle_events.to_vec(),
     });
-    // PlayerRoster last — so reconnecting hosts see the current player list.
     push(ServerMsg::PlayerRoster {
         players: world
             .players
@@ -83,7 +90,6 @@ fn broadcast_all_state(
             .collect(),
     });
 
-    // Per-player portfolio (broadcast to all; each client filters on its own id).
     let vol = world.realized_vol();
     for player in world.players.values() {
         push(ServerMsg::PlayerState {
@@ -101,6 +107,7 @@ fn broadcast_all_state(
 }
 
 /// Main game loop.  Runs as a background tokio task.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_loop(
     mut world: World,
     broadcast_tx: broadcast::Sender<Arc<String>>,
@@ -108,12 +115,12 @@ pub async fn run_loop(
     mut action_rx: mpsc::Receiver<InboundMsg>,
     api_key: String,
     seed: u64,
+    personal_senders: Arc<DashMap<u64, mpsc::UnboundedSender<Arc<String>>>>,
+    host_senders: Arc<Mutex<Vec<mpsc::UnboundedSender<Arc<String>>>>>,
 ) {
-    // Rolling conversation context for the per-cycle admin summary (Sonnet).
     let admin_context: Arc<Mutex<Vec<OwnedMessage>>> = Arc::new(Mutex::new(Vec::new()));
     tracing::info!("Sim loop started — waiting for host to start game");
 
-    // ── Lobby: wait for StartGame before running any cycles ──────────────────
     'lobby: loop {
         let Some(msg) = action_rx.recv().await else {
             return;
@@ -123,7 +130,6 @@ pub async fn run_loop(
         } = &msg
         {
             tracing::info!("Host started the game");
-            // Freeze cycle 0 immediately so players can read before the timer starts.
             world.paused = true;
             broadcast_msg(&broadcast_tx, &ServerMsg::GamePaused {});
             break 'lobby;
@@ -139,7 +145,6 @@ pub async fn run_loop(
     }
 
     'game: loop {
-        // ── Decision phase ────────────────────────────────────────────────────
         world.locked_in.clear();
         world.phase = CyclePhase::Decision;
         broadcast_msg(
@@ -154,10 +159,10 @@ pub async fn run_loop(
         let mut decision_end = Instant::now() + Duration::from_secs(world.cycle_duration_secs);
         let deadline = sleep_until(decision_end);
         tokio::pin!(deadline);
-        // If already paused when the phase opens (e.g. cycle 0), freeze the deadline
-        // immediately so resume logic can extend it correctly.
         let mut paused_at: Option<Instant> = if world.paused {
-            deadline.as_mut().reset(Instant::now() + Duration::from_secs(86400));
+            deadline
+                .as_mut()
+                .reset(Instant::now() + Duration::from_secs(86400));
             Some(Instant::now())
         } else {
             None
@@ -219,7 +224,6 @@ pub async fn run_loop(
             break 'game;
         }
 
-        // ── Resolution phase ──────────────────────────────────────────────────
         world.phase = CyclePhase::Resolving;
         broadcast_msg(
             &broadcast_tx,
@@ -249,9 +253,8 @@ pub async fn run_loop(
                 });
             }
 
-            // ── Per-cycle admin summary (fire-and-forget, Sonnet + rolling ctx) ──
+            // ── Per-cycle admin summary — targeted to host connections only ───
             {
-                let tx2 = broadcast_tx.clone();
                 let key = api_key.clone();
                 let evs = cycle_events.clone();
                 let cycle = world.cycle;
@@ -259,6 +262,7 @@ pub async fn run_loop(
                 let player_count = world.players.len();
                 let ctx_arc = admin_context.clone();
                 let prior = admin_context.lock().unwrap().clone();
+                let hsenders = host_senders.clone();
                 tokio::spawn(async move {
                     match crate::llm::narrator::generate_admin_summary(
                         &evs,
@@ -272,17 +276,24 @@ pub async fn run_loop(
                     {
                         Ok((text, new_ctx)) => {
                             *ctx_arc.lock().unwrap() = new_ctx;
-                            broadcast_msg(&tx2, &ServerMsg::AdminSummary { text, cycle });
+                            if let Ok(json) =
+                                serde_json::to_string(&ServerMsg::AdminSummary { text, cycle })
+                            {
+                                let arc = Arc::new(json);
+                                let senders = hsenders.lock().unwrap();
+                                for s in senders.iter() {
+                                    let _ = s.send(arc.clone());
+                                }
+                            }
                         }
                         Err(e) => tracing::warn!("admin summary error: {e}"),
                     }
                 });
             }
 
-            // ── Per-player finance coaching (fire-and-forget, one task per player) ──
+            // ── Per-player coaching — targeted to the individual player ───────
             let vol = world.realized_vol();
             for player in world.players.values() {
-                let tx2 = broadcast_tx.clone();
                 let key = api_key.clone();
                 let player_id = player.id.0;
                 let name = player.name.clone();
@@ -295,6 +306,7 @@ pub async fn run_loop(
                 let price = world.price;
                 let evs = cycle_events.clone();
                 let cycle = world.cycle;
+                let psenders = personal_senders.clone();
                 tokio::spawn(async move {
                     match crate::llm::narrator::generate_feedback(
                         &name,
@@ -312,7 +324,12 @@ pub async fn run_loop(
                     .await
                     {
                         Ok(tips) => {
-                            broadcast_msg(&tx2, &ServerMsg::PlayerFeedback { player_id, tips });
+                            if let Ok(json) = serde_json::to_string(&ServerMsg::PlayerFeedback {
+                                player_id,
+                                tips,
+                            }) {
+                                send_targeted(&psenders, player_id, Arc::new(json));
+                            }
                         }
                         Err(e) => tracing::warn!("feedback error for {name}: {e}"),
                     }
@@ -327,9 +344,6 @@ pub async fn run_loop(
             break 'game;
         }
 
-        // ── Summary phase — only every 5 cycles; otherwise auto-advance ───────
-        // world.cycle was incremented by resolve_cycle(), so the cycle that just
-        // finished is world.cycle - 1.  Pause at multiples of 5 (cycles 5, 10, …).
         let is_milestone = world.cycle.is_multiple_of(5) && world.cycle > 0;
         if is_milestone {
             world.phase = CyclePhase::Summary;
@@ -376,11 +390,10 @@ pub async fn run_loop(
                 break 'game;
             }
         }
-        // Non-milestone cycles fall through here and loop straight back to decision.
     }
 }
 
-/// Returns true if a game reset was requested (caller should reinitialise World).
+/// Returns true if a game reset was requested.
 fn handle_inbound(
     world: &mut World,
     msg: InboundMsg,
@@ -404,14 +417,17 @@ fn handle_inbound(
                     client_nonce,
                 },
             );
-            // Full state broadcast updates the snapshot so reconnecting clients see the new player.
             broadcast_all_state(world, tx, snapshot, &[]);
         }
         InboundMsg::Action { player_id, action } => {
             world.queue_action(player_id, action);
         }
         InboundMsg::Disconnect { player_id } => {
-            tracing::info!("Player {player_id:?} disconnected");
+            // Network drop — keep player in world so they can reconnect with their portfolio intact.
+            tracing::info!("Player {player_id:?} disconnected (will reconnect)");
+        }
+        InboundMsg::Leave { player_id } => {
+            tracing::info!("Player {player_id:?} left explicitly");
             world.players.remove(&player_id);
             broadcast_msg(
                 tx,
@@ -419,12 +435,12 @@ fn handle_inbound(
                     player_id: player_id.0,
                 },
             );
+            broadcast_all_state(world, tx, snapshot, &[]);
         }
         InboundMsg::Admin { command } => {
             use actions::AdminCommand;
             match command {
                 AdminCommand::ResetGame => {
-                    // Signal the sim loop to reinitialise World.
                     return true;
                 }
                 AdminCommand::EndGame => {
@@ -443,8 +459,6 @@ fn handle_inbound(
                 }
                 AdminCommand::ResumeGame => {
                     world.paused = false;
-                    // Actual seconds_remaining is broadcast by the decision loop after
-                    // it extends the deadline — we just flip the flag here.
                     broadcast_msg(
                         tx,
                         &ServerMsg::GameResumed {
@@ -458,12 +472,8 @@ fn handle_inbound(
                 AdminCommand::SetSeed { .. } => {
                     tracing::warn!("SetSeed ignored mid-game");
                 }
-                AdminCommand::StartGame => {
-                    // Already running — no-op.
-                }
-                AdminCommand::ContinueGame => {
-                    // Handled by the summary wait loop — no-op here.
-                }
+                AdminCommand::StartGame => {}
+                AdminCommand::ContinueGame => {}
                 AdminCommand::KickPlayer { player_id } => {
                     const KICK_MSGS: &[&str] = &[
                         "Your aura simply wasn't it",

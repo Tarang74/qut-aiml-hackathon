@@ -66,7 +66,7 @@ export interface GameState {
   myFeedback: string | null;
 
   // Per-cycle admin summary (Sonnet, only visible to admin/host)
-  adminSummary: string | null;
+  adminSummary: { text: string; cycle: number } | null;
 
   // All players' net worths — populated from PlayerState broadcasts (host uses this for leaderboard)
   playerNetWorths: Record<number, { name: string; netWorth: string }>;
@@ -173,7 +173,7 @@ function reducer(state: GameState, action: GameAction): GameState {
       return { ...state, adminSummary: null };
 
     case "clear_host":
-      return { ...state, isHost: false };
+      return { ...state, isHost: false, gameCode: null };
 
     case "leave_game":
       return {
@@ -181,6 +181,7 @@ function reducer(state: GameState, action: GameAction): GameState {
         myPlayerId: null,
         myName: "",
         myRole: "",
+        gameCode: null,
         error: null,
       };
 
@@ -277,7 +278,7 @@ function reducer(state: GameState, action: GameAction): GameState {
           };
 
         case "admin_summary":
-          return { ...state, adminSummary: msg.text };
+          return { ...state, adminSummary: { text: msg.text, cycle: msg.cycle } };
 
         case "player_roster":
           return {

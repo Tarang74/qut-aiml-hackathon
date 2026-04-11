@@ -22,7 +22,6 @@ export default function GameScreen() {
   const isFarmer = state.myRole === "farmer";
 
   const [tab, setTab] = useState<Tab>(isFarmer ? "farm" : "market");
-  const [countdown, setCountdown] = useState(state.secondsRemaining);
   // pending: action selected but not yet sent; locked: action committed this cycle
   const [pending, setPending] = useState<{ action: PlayerAction; label: string } | null>(null);
   const [locked, setLocked] = useState(false);
@@ -36,19 +35,13 @@ export default function GameScreen() {
   }
 
   function leaveGame() {
+    // Tell server to remove us from the game and invalidate our session.
+    send({ type: "leave" });
+    // Clear session cookie so reconnect doesn't auto-rejoin.
+    document.cookie = "aura_session=; Max-Age=0; Path=/";
     dispatch({ type: "leave_game" });
     navigate("/join");
   }
-
-  useEffect(() => {
-    setCountdown(state.secondsRemaining);
-  }, [state.phase, state.cycle, state.secondsRemaining]);
-
-  useEffect(() => {
-    if (state.phase !== "decision" || state.paused) return;
-    const id = setInterval(() => setCountdown((n) => Math.max(0, n - 1)), 1000);
-    return () => clearInterval(id);
-  }, [state.phase, state.cycle, state.paused]);
 
   // Reset lock state at the start of each decision window.
   useEffect(() => {
@@ -97,94 +90,42 @@ export default function GameScreen() {
     <div style={s.root}>
       {/* ── Top bar ──────────────────────────────────────────────────────── */}
       <div style={s.topBar}>
-        <div style={{ minWidth: 0, overflow: "hidden" }}>
-          <span style={s.roleTag}>{state.myRole?.toUpperCase()}</span>
-          <span style={{ ...s.playerName, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: "30vw", display: "inline-block", verticalAlign: "middle" }}>{state.myName}</span>
+        <div style={s.topBarLeft}>
+          <span style={s.priceLabel}>Aura</span>
+          <span style={{ ...s.priceValue, color: "#7a5010" }}>{state.myAura.toFixed(0)}</span>
         </div>
-        <div style={s.priceBlock}>
+        <div style={s.topBarCenter}>
           <span style={s.priceLabel}>CornCo</span>
           <span style={s.priceValue}>${price.toFixed(2)}</span>
         </div>
-        <div style={{ textAlign: "right" as const, minWidth: 80, flexShrink: 0 }}>
-          {state.paused ? (
-            <span style={{ ...s.phasePill, background: "#c8a830", color: "#ffffff", fontWeight: "800" as const }}>⏸ Paused</span>
-          ) : isDecision ? (
-            <span style={{ ...s.phasePill, background: "#e8f5e8", color: "#1d6b1d" }}>
-              {countdown}s
-            </span>
-          ) : (
-            <span style={{ ...s.phasePill, background: "#f5f0e3", color: "#7a5010" }}>
-              Resolving…
+        <div style={s.topBarRight}>
+          <button style={s.helpBtn} onClick={() => setShowHelp(true)}>?</button>
+          <button style={s.leaveBtn} onClick={leaveGame} title="Leave game">✕</button>
+        </div>
+      </div>
+
+      {/* ── Queued action banner — only shown when there's something to say ── */}
+      {!state.paused && (locked || !isDecision) && (
+        <div style={{
+          ...s.countdownBar,
+          ...(locked ? { background: "#e0f5e0", borderColor: "#9ac89a" }
+            : { background: "#f8f4e0", borderColor: "#c8b060" }),
+        }}>
+          {isDecision && locked && (
+            <>
+              <span style={{ ...s.countdownNum, color: "#1d6b1d", fontSize: "1.3rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: "70%", minWidth: 0 }}>
+                ✓ {pending ? pending.label : "No action"}
+              </span>
+              <span style={{ ...s.countdownLabel, color: "#9a9a90", flexShrink: 0 }}>waiting…</span>
+            </>
+          )}
+          {!isDecision && (
+            <span style={{ ...s.countdownNum, color: "#7a5010", fontSize: "1.4rem" }}>
+              Resolving cycle {state.cycle}…
             </span>
           )}
         </div>
-        <button style={s.helpBtn} onClick={() => setShowHelp(true)}>?</button>
-        <button style={s.leaveBtn} onClick={leaveGame} title="Leave game">✕</button>
-      </div>
-
-      {/* ── Queued action banner + countdown ─────────────────────────────── */}
-      <div style={{
-        ...s.countdownBar,
-        ...(state.paused
-          ? { background: "#fdf6e3", borderColor: "#c8a830", flexDirection: "row" as const, justifyContent: "center", gap: "0.6rem" }
-          : isDecision && !locked && pending
-          ? { background: "#fffbe8", borderColor: "#d4aa20", flexDirection: "row" as const, justifyContent: "space-between", padding: "0.45rem 0.875rem" }
-          : locked && isDecision ? { background: "#e0f5e0", borderColor: "#9ac89a" }
-          : !isDecision ? { background: "#f8f4e0", borderColor: "#c8b060" }
-          : {}),
-      }}>
-        {/* ── Paused banner (takes priority over all other states) ─────── */}
-        {state.paused && (
-          <>
-            <span style={{ fontSize: "1.3rem", lineHeight: 1 }}>⏸</span>
-            <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "center" }}>
-              <span style={{ fontSize: "0.95rem", fontWeight: "800" as const, color: "#7a5010", letterSpacing: "0.08em", textTransform: "uppercase" as const }}>
-                Game Paused
-              </span>
-              {isDecision && (
-                <span style={{ fontSize: "0.65rem", color: "#9a7838", letterSpacing: "0.05em", marginTop: "0.1rem" }}>
-                  {countdown}s on the clock — timer frozen
-                </span>
-              )}
-            </div>
-          </>
-        )}
-
-        {!state.paused && isDecision && !locked && !pending && (
-          <>
-            <span style={s.countdownNum}>{countdown}</span>
-            <span style={s.countdownLabel}>seconds to lock in</span>
-          </>
-        )}
-        {!state.paused && isDecision && !locked && pending && (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", minWidth: 0, overflow: "hidden" }}>
-              <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>⚡</span>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: "0.58rem", color: "#7a5010", fontWeight: "700" as const, letterSpacing: "0.07em", textTransform: "uppercase" as const }}>Action queued</div>
-                <div style={{ fontSize: "0.88rem", fontWeight: "700" as const, color: "#18181a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{pending.label}</div>
-              </div>
-            </div>
-            <div style={{ textAlign: "right" as const, flexShrink: 0 }}>
-              <div style={{ fontSize: "1.6rem", fontWeight: "800" as const, color: "#9a7010", lineHeight: 1 }}>{countdown}</div>
-              <div style={{ fontSize: "0.52rem", color: "#9a8040", letterSpacing: "0.07em", textTransform: "uppercase" as const }}>sec left</div>
-            </div>
-          </>
-        )}
-        {!state.paused && isDecision && locked && (
-          <>
-            <span style={{ ...s.countdownNum, color: "#1d6b1d", fontSize: "1.3rem" }}>
-              ✓ {pending ? pending.label : "No action"}
-            </span>
-            <span style={{ ...s.countdownLabel, color: "#9a9a90" }}>waiting for others…</span>
-          </>
-        )}
-        {!state.paused && !isDecision && (
-          <span style={{ ...s.countdownNum, color: "#7a5010", fontSize: "1.4rem" }}>
-            Resolving cycle {state.cycle}…
-          </span>
-        )}
-      </div>
+      )}
 
       {/* ── Tab bar ──────────────────────────────────────────────────────── */}
       <div style={s.tabBar}>
@@ -442,11 +383,9 @@ function MarketTab({
           <Stat label="Cash" value={`$${cash.toFixed(0)}`} />
           <Stat label="Shares" value={String(state.myShares)} color={state.myShares < 0 ? "#7a1a1a" : undefined} />
           <Stat label="Net worth" value={`$${parseFloat(state.myNetWorth).toFixed(0)}`} />
-          <Stat label="Aura" value={state.myAura.toFixed(0)} color="#7a5010" />
+          <Stat label="Vol (cycle)" value={String(state.cycleVolume)} />
           <Stat label="Bid depth" value={String(state.bidDepth)} />
           <Stat label="Ask depth" value={String(state.askDepth)} />
-          <Stat label="Vol (cycle)" value={String(state.cycleVolume)} />
-          <Stat label="Price" value={`$${price.toFixed(2)}`} color="#1d6b1d" />
         </div>
       </div>
       <div style={s.card}>
@@ -606,30 +545,41 @@ function ChaosTab({
   const aura = state.myAura;
   const price = parseFloat(state.price);
 
+  // Targets: all farms/mills/npcs except the current player's own farm
   const otherFarms = state.farms.filter((f) => f.owner !== state.myPlayerId);
-  const aliveFarms = state.farms;
   const aliveMills = state.mills;
   const aliveNpcs = state.npcOwners.filter((n) => n.alive);
 
-  const [targetFarm, setTargetFarm] = useState<number | null>(
-    otherFarms[0]?.id ?? null
-  );
-  const [hitmanFarm, setHitmanFarm] = useState<number | null>(
-    aliveFarms[0]?.id ?? null
-  );
-  const [targetMill, setTargetMill] = useState<number | null>(
-    aliveMills[0]?.id ?? null
-  );
-  const [targetNpc, setTargetNpc] = useState<number | null>(
-    aliveNpcs[0]?.id ?? null
-  );
+  // Selections — useState is only used for explicit user picks; we derive a
+  // "valid" value on every render so new farms/players appear automatically.
+  const [targetFarm, setTargetFarm] = useState<number | null>(null);
+  const [hitmanFarm, setHitmanFarm] = useState<number | null>(null);
+  const [targetMill, setTargetMill] = useState<number | null>(null);
+  const [targetNpc, setTargetNpc] = useState<number | null>(null);
   const [rumor, setRumor] = useState("");
-  const [acqFarm, setAcqFarm] = useState<number | null>(otherFarms[0]?.id ?? null);
-  const [acqMill, setAcqMill] = useState<number | null>(aliveMills[0]?.id ?? null);
+  const [acqFarm, setAcqFarm] = useState<number | null>(null);
+  const [acqMill, setAcqMill] = useState<number | null>(null);
+
+  // Fallback to first available if the stored selection is gone / never set.
+  const vTargetFarm = otherFarms.find(f => f.id === targetFarm) ? targetFarm : (otherFarms[0]?.id ?? null);
+  const vHitmanFarm = otherFarms.find(f => f.id === hitmanFarm) ? hitmanFarm : (otherFarms[0]?.id ?? null);
+  const vTargetMill = aliveMills.find(m => m.id === targetMill) ? targetMill : (aliveMills[0]?.id ?? null);
+  const vTargetNpc  = aliveNpcs.find(n => n.id === targetNpc)   ? targetNpc  : (aliveNpcs[0]?.id  ?? null);
+  const vAcqFarm    = otherFarms.find(f => f.id === acqFarm)    ? acqFarm    : (otherFarms[0]?.id ?? null);
+  const vAcqMill    = aliveMills.find(m => m.id === acqMill)    ? acqMill    : (aliveMills[0]?.id ?? null);
 
   const cash = parseFloat(state.myCash);
   const farmCost = price * 15;
   const millCost = price * 20;
+
+  // Resolve display name for a farm owner: check players first, then NPCs.
+  function ownerLabel(ownerId: number): string {
+    const player = state.knownPlayers.find(p => p.id === ownerId);
+    if (player) return `${player.name}`;
+    const npc = state.npcOwners.find(n => n.id === ownerId);
+    if (npc) return npc.name;
+    return `#${ownerId}`;
+  }
 
   return (
     <>
@@ -644,17 +594,17 @@ function ChaosTab({
       <div style={s.card}>
         <p style={s.cardTitle}>🔥 Burn Farm — 20 aura</p>
         <div style={s.targetRow}>
-          <select style={s.select} value={targetFarm ?? ""} onChange={(e) => setTargetFarm(Number(e.target.value))}>
+          <select style={s.select} value={vTargetFarm ?? ""} onChange={(e) => setTargetFarm(Number(e.target.value))}>
             {otherFarms.length === 0 && <option value="">No targets</option>}
             {otherFarms.map((f) => (
-              <option key={f.id} value={f.id}>Farm #{f.id} ({f.state}, {f.fields} fields)</option>
+              <option key={f.id} value={f.id}>Farm #{f.id} — {ownerLabel(f.owner)} ({f.state})</option>
             ))}
           </select>
           <ActionBtn label="🔥 Burn" sub={aura >= 20 ? "lights it up" : "need 20 aura"}
-            disabled={!canAct || aura < 20 || targetFarm === null || otherFarms.length === 0}
+            disabled={!canAct || aura < 20 || vTargetFarm === null || otherFarms.length === 0}
             color="#f5e8e8" borderColor="#aa5a5a"
-            selected={pendingLabel === `Burn Farm #${targetFarm}`}
-            onClick={() => act({ kind: "burn_farm", target_farm: targetFarm! }, `Burn Farm #${targetFarm}`)} />
+            selected={pendingLabel === `Burn Farm #${vTargetFarm}`}
+            onClick={() => act({ kind: "burn_farm", target_farm: vTargetFarm! }, `Burn Farm #${vTargetFarm}`)} />
         </div>
       </div>
 
@@ -662,53 +612,53 @@ function ChaosTab({
       <div style={s.card}>
         <p style={s.cardTitle}>🏭🔥 Burn Mill — 25 aura</p>
         <div style={s.targetRow}>
-          <select style={s.select} value={targetMill ?? ""} onChange={(e) => setTargetMill(Number(e.target.value))}>
+          <select style={s.select} value={vTargetMill ?? ""} onChange={(e) => setTargetMill(Number(e.target.value))}>
             {aliveMills.length === 0 && <option value="">No mills</option>}
             {aliveMills.map((m) => (
               <option key={m.id} value={m.id}>Mill #{m.id} ({m.state})</option>
             ))}
           </select>
           <ActionBtn label="🏭🔥 Burn" sub={aura >= 25 ? "shuts it down" : "need 25 aura"}
-            disabled={!canAct || aura < 25 || targetMill === null || aliveMills.length === 0}
+            disabled={!canAct || aura < 25 || vTargetMill === null || aliveMills.length === 0}
             color="#f5e8e8" borderColor="#aa5a5a"
-            selected={pendingLabel === `Burn Mill #${targetMill}`}
-            onClick={() => act({ kind: "burn_mill", target_mill: targetMill! }, `Burn Mill #${targetMill}`)} />
+            selected={pendingLabel === `Burn Mill #${vTargetMill}`}
+            onClick={() => act({ kind: "burn_mill", target_mill: vTargetMill! }, `Burn Mill #${vTargetMill}`)} />
         </div>
       </div>
 
-      {/* Hitman Worker */}
+      {/* Hitman Worker — targets other players' and NPCs' farms */}
       <div style={s.card}>
         <p style={s.cardTitle}>🔪 Hitman Worker — 15 aura</p>
         <div style={s.targetRow}>
-          <select style={s.select} value={hitmanFarm ?? ""} onChange={(e) => setHitmanFarm(Number(e.target.value))}>
-            {aliveFarms.length === 0 && <option value="">No targets</option>}
-            {aliveFarms.map((f) => (
-              <option key={f.id} value={f.id}>Farm #{f.id} ({f.workers} workers)</option>
+          <select style={s.select} value={vHitmanFarm ?? ""} onChange={(e) => setHitmanFarm(Number(e.target.value))}>
+            {otherFarms.length === 0 && <option value="">No targets</option>}
+            {otherFarms.map((f) => (
+              <option key={f.id} value={f.id}>Farm #{f.id} — {ownerLabel(f.owner)} ({f.workers} workers)</option>
             ))}
           </select>
           <ActionBtn label="🔪 Send" sub={aura >= 15 ? "one less worker" : "need 15 aura"}
-            disabled={!canAct || aura < 15 || hitmanFarm === null}
+            disabled={!canAct || aura < 15 || vHitmanFarm === null || otherFarms.length === 0}
             color="#f0e8f5" borderColor="#9a5aaa"
-            selected={pendingLabel === `Hitman Worker on Farm #${hitmanFarm}`}
-            onClick={() => act({ kind: "hitman_worker", target_farm: hitmanFarm! }, `Hitman Worker on Farm #${hitmanFarm}`)} />
+            selected={pendingLabel === `Hitman Worker on Farm #${vHitmanFarm}`}
+            onClick={() => act({ kind: "hitman_worker", target_farm: vHitmanFarm! }, `Hitman Worker on Farm #${vHitmanFarm}`)} />
         </div>
       </div>
 
-      {/* Hitman Owner */}
+      {/* Hitman NPC Owner */}
       <div style={s.card}>
         <p style={s.cardTitle}>☠️ Hitman NPC Owner — 50 aura</p>
         <div style={s.targetRow}>
-          <select style={s.select} value={targetNpc ?? ""} onChange={(e) => setTargetNpc(Number(e.target.value))}>
+          <select style={s.select} value={vTargetNpc ?? ""} onChange={(e) => setTargetNpc(Number(e.target.value))}>
             {aliveNpcs.length === 0 && <option value="">No targets</option>}
             {aliveNpcs.map((n) => (
               <option key={n.id} value={n.id}>{n.name}</option>
             ))}
           </select>
           <ActionBtn label="☠️ Send" sub={aura >= 50 ? "permanently removed" : "need 50 aura"}
-            disabled={!canAct || aura < 50 || targetNpc === null || aliveNpcs.length === 0}
+            disabled={!canAct || aura < 50 || vTargetNpc === null || aliveNpcs.length === 0}
             color="#f0e8f5" borderColor="#9a5aaa"
             selected={pendingLabel?.startsWith("Hitman on ") ?? false}
-            onClick={() => act({ kind: "hitman_owner", target_npc: targetNpc! }, `Hitman on ${aliveNpcs.find((n) => n.id === targetNpc)?.name ?? "NPC"}`)} />
+            onClick={() => act({ kind: "hitman_owner", target_npc: vTargetNpc! }, `Hitman on ${aliveNpcs.find((n) => n.id === vTargetNpc)?.name ?? "NPC"}`)} />
         </div>
       </div>
 
@@ -733,17 +683,17 @@ function ChaosTab({
       <div style={s.card}>
         <p style={s.cardTitle}>🌾 Acquire Farm — ~${farmCost.toFixed(0)}</p>
         <div style={s.targetRow}>
-          <select style={s.select} value={acqFarm ?? ""} onChange={(e) => setAcqFarm(Number(e.target.value))}>
+          <select style={s.select} value={vAcqFarm ?? ""} onChange={(e) => setAcqFarm(Number(e.target.value))}>
             {otherFarms.length === 0 && <option value="">No farms available</option>}
             {otherFarms.map((f) => (
-              <option key={f.id} value={f.id}>Farm #{f.id} ({f.fields} fields)</option>
+              <option key={f.id} value={f.id}>Farm #{f.id} — {ownerLabel(f.owner)} ({f.fields} fields)</option>
             ))}
           </select>
           <ActionBtn label="🌾 Buy" sub={cash >= farmCost ? `$${farmCost.toFixed(0)}` : "not enough cash"}
-            disabled={!canAct || cash < farmCost || acqFarm === null || otherFarms.length === 0}
+            disabled={!canAct || cash < farmCost || vAcqFarm === null || otherFarms.length === 0}
             color="#e8f2f5" borderColor="#5a8aa0"
-            selected={pendingLabel === `Acquire Farm #${acqFarm}`}
-            onClick={() => act({ kind: "acquire_farm", target_farm: acqFarm! }, `Acquire Farm #${acqFarm}`)} />
+            selected={pendingLabel === `Acquire Farm #${vAcqFarm}`}
+            onClick={() => act({ kind: "acquire_farm", target_farm: vAcqFarm! }, `Acquire Farm #${vAcqFarm}`)} />
         </div>
       </div>
 
@@ -751,17 +701,17 @@ function ChaosTab({
       <div style={s.card}>
         <p style={s.cardTitle}>🏭 Acquire Mill — ~${millCost.toFixed(0)}</p>
         <div style={s.targetRow}>
-          <select style={s.select} value={acqMill ?? ""} onChange={(e) => setAcqMill(Number(e.target.value))}>
+          <select style={s.select} value={vAcqMill ?? ""} onChange={(e) => setAcqMill(Number(e.target.value))}>
             {aliveMills.length === 0 && <option value="">No mills available</option>}
             {aliveMills.map((m) => (
               <option key={m.id} value={m.id}>Mill #{m.id} ({m.state})</option>
             ))}
           </select>
           <ActionBtn label="🏭 Buy" sub={cash >= millCost ? `$${millCost.toFixed(0)}` : "not enough cash"}
-            disabled={!canAct || cash < millCost || acqMill === null || aliveMills.length === 0}
+            disabled={!canAct || cash < millCost || vAcqMill === null || aliveMills.length === 0}
             color="#e8f2f5" borderColor="#5a8aa0"
-            selected={pendingLabel === `Acquire Mill #${acqMill}`}
-            onClick={() => act({ kind: "acquire_mill", target_mill: acqMill! }, `Acquire Mill #${acqMill}`)} />
+            selected={pendingLabel === `Acquire Mill #${vAcqMill}`}
+            onClick={() => act({ kind: "acquire_mill", target_mill: vAcqMill! }, `Acquire Mill #${vAcqMill}`)} />
         </div>
       </div>
     </>
@@ -889,18 +839,15 @@ function ActionBtn({
 const s = {
   root: { display: "flex", flexDirection: "column" as const, minHeight: "100vh", width: "100%", maxWidth: "100%", overflow: "hidden", background: "#f5f3ef", fontFamily: "inherit" },
   topBar: {
-    display: "flex", alignItems: "center", justifyContent: "space-between",
+    display: "flex", alignItems: "center",
     padding: "0.6rem 1rem", background: "#ffffff", borderBottom: "1px solid #e2ddd6",
-    position: "sticky" as const, top: 0, zIndex: 10, minWidth: 0, width: "100%",
-    gap: "0.5rem",
+    position: "sticky" as const, top: 0, zIndex: 10, width: "100%",
   },
-  roleTag: { fontSize: "0.6rem", background: "#e8f5f5", color: "#0d5858", padding: "0.15rem 0.4rem", borderRadius: 3, letterSpacing: "0.06em", marginRight: "0.35rem", fontWeight: "600" as const, flexShrink: 0 },
-  playerName: { fontSize: "0.82rem", color: "#3a3a36", fontWeight: "500" as const },
-  priceBlock: { textAlign: "center" as const, flexShrink: 0 },
+  topBarLeft: { flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "flex-start", minWidth: 0 },
+  topBarCenter: { flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", minWidth: 0 },
+  topBarRight: { flex: 1, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "0.4rem", minWidth: 0 },
   priceLabel: { display: "block", fontSize: "0.55rem", color: "#9a9a90", letterSpacing: "0.1em", textTransform: "uppercase" as const, fontWeight: "600" as const },
   priceValue: { fontSize: "1.35rem", fontWeight: "800" as const, color: "#1d6b1d", letterSpacing: "-0.01em" },
-  phasePill: { fontSize: "0.75rem", fontWeight: "700" as const, padding: "0.2rem 0.45rem", borderRadius: 4, letterSpacing: "0.02em" },
-  cycleLabel: { fontSize: "0.6rem", color: "#9a9a90", marginTop: "0.1rem", textAlign: "right" as const },
   helpBtn: {
     flexShrink: 0, width: 26, height: 26, borderRadius: "50%",
     background: "#f0eee9", border: "1px solid #e2ddd6",
@@ -916,8 +863,9 @@ const s = {
     fontFamily: "inherit", padding: 0,
   },
   countdownBar: {
-    display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center",
+    display: "flex", flexDirection: "row" as const, alignItems: "center", justifyContent: "center",
     padding: "0.4rem 1rem", minHeight: 54, background: "#f0f8f0", borderBottom: "1px solid #c8e4c8",
+    gap: "0.5rem", width: "100%", minWidth: 0,
   },
   countdownNum: { fontSize: "1.8rem", fontWeight: "800" as const, color: "#1d6b1d", lineHeight: 1, letterSpacing: "-0.02em" },
   countdownLabel: { fontSize: "0.6rem", color: "#5a9a5a", letterSpacing: "0.08em", textTransform: "uppercase" as const, marginTop: "0.1rem", fontWeight: "600" as const },
@@ -947,11 +895,11 @@ const s = {
   content: { display: "flex", flexDirection: "column" as const, gap: "0.5rem", padding: "0.5rem 1rem", flex: 1, minWidth: 0, width: "100%" },
   card: { background: "#ffffff", border: "1px solid #e2ddd6", borderRadius: 10, padding: "0.75rem 0.875rem", minWidth: 0 },
   cardTitle: { margin: "0 0 0.5rem", fontSize: "0.65rem", color: "#9a9a90", textTransform: "uppercase" as const, letterSpacing: "0.08em", fontWeight: "700" as const },
-  statGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem 0.75rem" },
-  stat: { display: "flex", flexDirection: "column" as const },
+  statGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: "0.5rem 0.75rem", minWidth: 0 },
+  stat: { display: "flex", flexDirection: "column" as const, minWidth: 0 },
   statLabel: { fontSize: "0.6rem", color: "#9a9a90", textTransform: "uppercase" as const, letterSpacing: "0.06em", fontWeight: "600" as const },
-  statValue: { fontSize: "0.95rem", fontWeight: "600" as const, marginTop: "0.1rem", color: "#18181a" },
-  btnGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" },
+  statValue: { fontSize: "0.95rem", fontWeight: "600" as const, marginTop: "0.1rem", color: "#18181a", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const },
+  btnGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.4rem", minWidth: 0 },
   actionBtn: {
     border: "1.5px solid", borderRadius: 8, padding: "0.75rem 0.5rem", minHeight: 58,
     display: "flex", flexDirection: "column" as const, alignItems: "center",

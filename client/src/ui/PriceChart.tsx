@@ -135,8 +135,8 @@ function draw(canvas: HTMLCanvasElement, prices: number[]) {
   const n = prices.length;
   const xTicks: Array<{ idx: number; label: string; align: CanvasTextAlign }> = [
     { idx: 0,                        label: "start",         align: "left"   as CanvasTextAlign },
-    { idx: Math.round(n * 0.33),     label: `t${Math.round(n * 0.33)}`,  align: "center" as CanvasTextAlign },
-    { idx: Math.round(n * 0.67),     label: `t${Math.round(n * 0.67)}`,  align: "center" as CanvasTextAlign },
+    { idx: Math.round(n * 0.33),     label: `${Math.round(n * 0.33)}`,  align: "center" as CanvasTextAlign },
+    { idx: Math.round(n * 0.67),     label: `${Math.round(n * 0.67)}`,  align: "center" as CanvasTextAlign },
     { idx: n - 1,                    label: "now",           align: "right"  as CanvasTextAlign },
   ]
     // Deduplicate adjacent same-index ticks when history is very short.

@@ -4,10 +4,12 @@
  * Admin/spectator view. Never joins as a player.
  * Shows the live price chart, stock price, player list (with kick), and AI summaries.
  */
+import { useEffect, useRef, useState } from "react";
 import { useGameState, useWsSend } from "../state/store";
 import type { GameEvent } from "../ws/protocol";
 import PriceChart from "./PriceChart";
 import { TICKER_HEIGHT } from "./NewsTicker";
+import QRCode from "./QRCode";
 
 function describeEvent(ev: GameEvent): string {
   switch (ev.kind) {
@@ -41,10 +43,56 @@ export default function HostScreen() {
   const send = useWsSend();
   const price = parseFloat(state.price).toFixed(2);
   const isSummary = state.phase === "summary";
-  const phase = state.phase === "lobby" ? "Waiting for players…" : `${state.phase} — cycle ${state.cycle}`;
-  function kickPlayer(playerId: number) {
-    send({ type: "admin", command: { cmd: "kick_player", player_id: playerId } });
+  const phase = `Cycle ${state.cycle}`;
+
+  // Local countdown — mirrors state.secondsRemaining but ticks every 1s locally
+  // so the display doesn't stutter waiting for server messages.
+  const [showQR, setShowQR] = useState(true);
+  const [localSecs, setLocalSecs] = useState<number | null>(null);
+  useEffect(() => {
+    // Only tick during a live decision phase; hide before game starts or when paused.
+    if (state.phase !== "decision" || state.cycle === 0) { setLocalSecs(null); return; }
+    if (state.paused) return; // freeze display, don't start a new interval
+    setLocalSecs(state.secondsRemaining);
+    const id = setInterval(() => setLocalSecs(s => (s !== null && s > 0 ? s - 1 : s)), 1000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.secondsRemaining, state.phase, state.paused, state.cycle]);
+
+  // Cycle duration control — default 8s matches server config default
+  const [cycleSecs, setCycleSecs] = useState(8);
+  function adjustCycleSecs(delta: number) {
+    const next = Math.max(5, cycleSecs + delta);
+    setCycleSecs(next);
+    send({ type: "admin", command: { cmd: "set_cycle_secs", secs: next } });
   }
+
+  // Auto-cycle: automatically continue after each summary phase
+  const [autoCycle, setAutoCycle] = useState(false);
+  const [autoCountdown, setAutoCountdown] = useState<number | null>(null);
+  // Keep send stable inside the interval callback
+  const sendRef = useRef(send);
+  useEffect(() => { sendRef.current = send; }, [send]);
+
+  useEffect(() => {
+    if (autoCycle && state.phase === "summary") {
+      setAutoCountdown(5);
+      const interval = setInterval(() => {
+        setAutoCountdown(prev => {
+          if (prev === null || prev <= 1) {
+            clearInterval(interval);
+            sendRef.current({ type: "admin", command: { cmd: "continue_game" } });
+            return null;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+    setAutoCountdown(null);
+    // phase and autoCycle are the only triggers; sendRef is stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCycle, state.phase]);
 
   function startGame() {
     send({ type: "admin", command: { cmd: "start_game" } });
@@ -65,39 +113,85 @@ export default function HostScreen() {
   return (
     <div style={styles.root}>
       <div style={styles.header}>
-        <span style={{ ...styles.phase, ...(state.paused ? { color: "#c8a830", fontWeight: 700 } : {}) }}>
-          {state.paused ? "⏸ PAUSED" : phase}
-          {state.gameCode && state.phase !== "lobby" && (
-            <span style={styles.codeInline}> · #{state.gameCode}</span>
-          )}
-        </span>
-        {state.phase === "lobby" ? (
-          <button style={styles.startBtn} onClick={startGame}>
-            Start Game
+        {/* Left: logo + phase/buttons */}
+        <div style={styles.headerLeft}>
+          <span style={styles.logoText}>Aura Farmers</span>
+          <div style={styles.headerButtons}>
+            {state.phase === "lobby" ? (
+              <>
+                <button style={styles.startBtn} onClick={startGame}>Start Game</button>
+                <span style={styles.playerCount}>
+                  {state.knownPlayers.length} player{state.knownPlayers.length !== 1 ? "s" : ""}
+                </span>
+              </>
+            ) : (
+              <span style={{ ...styles.phase, ...(state.paused ? { color: "#c8a830", fontWeight: 700 } : {}) }}>
+                {state.paused ? "⏸ PAUSED" : phase}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Center: QR toggle */}
+        <div style={{ position: "relative" as const, flexShrink: 0 }}>
+          <button style={styles.qrToggleBtn} onClick={() => setShowQR(v => !v)}>
+            {state.gameCode ?? "—"}
           </button>
-        ) : isSummary ? (
-          <>
-            <button style={styles.continueBtn} onClick={continueGame}>
-              Continue →
-            </button>
-            <button style={styles.endBtn} onClick={endGame}>End Game</button>
-          </>
-        ) : (
-          <>
-            <button
-              style={{
-                ...styles.pauseBtn,
-                ...(state.paused
-                  ? { background: "#c8a830", border: "2px solid #c8a830", color: "#ffffff", fontWeight: 700 }
-                  : {}),
-              }}
-              onClick={togglePause}
-            >
-              {state.paused ? "▶ Resume" : "⏸ Pause"}
-            </button>
-            <button style={styles.endBtn} onClick={endGame}>End Game</button>
-          </>
-        )}
+          {showQR && (
+            <div style={styles.qrDropdown}>
+              <QRCode value={`${window.location.origin}/${state.gameCode ?? ""}`} style={{ display: "block" }} />
+            </div>
+          )}
+        </div>
+
+        {/* Right: controls */}
+        <div style={styles.headerRight}>
+          {state.phase !== "lobby" && (
+            <div style={styles.rightBtnGroup}>
+              <div style={styles.rightBtnRow}>
+                {isSummary ? (
+                  <>
+                    <button style={styles.continueBtn} onClick={continueGame}>Continue →</button>
+                    <button
+                      style={{ ...styles.autoBtn, ...(autoCycle ? styles.autoBtnOn : {}) }}
+                      onClick={() => setAutoCycle(v => !v)}
+                    >
+                      {autoCycle && autoCountdown !== null ? `Auto ${autoCountdown}s` : "Auto"}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      style={{
+                        ...styles.pauseBtn,
+                        ...(state.paused
+                          ? { background: "#c8a830", border: "2px solid #c8a830", color: "#ffffff", fontWeight: 700 }
+                          : {}),
+                      }}
+                      onClick={togglePause}
+                    >
+                      {state.paused ? "▶ Resume" : "⏸ Pause"}
+                    </button>
+                    <button
+                      style={{ ...styles.autoBtn, ...(autoCycle ? styles.autoBtnOn : {}) }}
+                      onClick={() => setAutoCycle(v => !v)}
+                    >
+                      Auto
+                    </button>
+                  </>
+                )}
+              </div>
+              <button style={styles.endBtn} onClick={endGame}>End Game</button>
+              <div style={styles.secsRow}>
+                <button style={styles.secsAdj} onClick={() => adjustCycleSecs(-5)}>−5</button>
+                <button style={styles.secsAdj} onClick={() => adjustCycleSecs(-1)}>−1</button>
+                <span style={styles.secsLabel}>{cycleSecs}s</span>
+                <button style={styles.secsAdj} onClick={() => adjustCycleSecs(1)}>+1</button>
+                <button style={styles.secsAdj} onClick={() => adjustCycleSecs(5)}>+5</button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Milestone summary (every 5 cycles) ──────────────────────────── */}
@@ -106,18 +200,15 @@ export default function HostScreen() {
       {/* ── Price + chart ─────────────────────────────────────────────────── */}
       <div style={styles.priceCard}>
         <div style={styles.priceLine}>
-          <div>
+          <div style={{ flexShrink: 0, minWidth: 0 }}>
             <p style={styles.priceLabel}>CORNCO</p>
             <p style={styles.priceValue}>${price}</p>
-            {state.phase === "decision" && (
-              <p style={styles.countdown}>{state.secondsRemaining}s remaining</p>
-            )}
           </div>
           <div style={styles.marketMini}>
             {(() => {
               const hist = state.priceHistory.map(parseFloat).filter(n => !isNaN(n));
-              const hi = hist.length ? Math.max(...hist).toFixed(2) : "—";
-              const lo = hist.length ? Math.min(...hist).toFixed(2) : "—";
+              const hi = hist.length ? fmtNum(Math.max(...hist)) : "—";
+              const lo = hist.length ? fmtNum(Math.min(...hist)) : "—";
               return (
                 <>
                   <MiniStat label="High" value={`$${hi}`} color="#1d6b1d" />
@@ -134,58 +225,12 @@ export default function HostScreen() {
             })()}
           </div>
         </div>
-        <div style={styles.chartBox}>
-          <PriceChart history={state.priceHistory} />
+        <div style={styles.chartRow}>
+          <div style={{ ...styles.chartBox, flex: 1 }}>
+            <PriceChart history={state.priceHistory} />
+          </div>
         </div>
       </div>
-
-      {/* ── Lobby: QR join panel + player list ───────────────────────────── */}
-      {state.phase === "lobby" && (
-        <div style={styles.lobbyRow}>
-          {/* QR + code */}
-          <div style={styles.joinPanel}>
-            <img src="/qr-code.png" alt="Scan to join" style={styles.qrImg} />
-            <p style={styles.joinLabel}>Scan to join</p>
-            <div style={styles.joinCode}>{state.gameCode ?? "—"}</div>
-            <p style={styles.joinSub}>Enter this code on the join page</p>
-          </div>
-
-          {/* Player waiting list */}
-          <div style={{ ...styles.card, flex: 1, minWidth: 0 }}>
-            <h2 style={styles.cardTitle}>Players ({state.knownPlayers.length})</h2>
-            {state.knownPlayers.length === 0 ? (
-              <p style={styles.empty}>No one yet — waiting for players to scan…</p>
-            ) : (
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>#</th>
-                    <th style={styles.th}>Name</th>
-                    <th style={styles.th}>Role</th>
-                    <th style={styles.th}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {state.knownPlayers.map((p, i) => (
-                    <tr key={p.id}>
-                      <td style={styles.td}>{i + 1}</td>
-                      <td style={styles.td}>{p.name}</td>
-                      <td style={{ ...styles.td, color: p.role === "farmer" ? "#1d6b1d" : "#0d5858" }}>
-                        {p.role}
-                      </td>
-                      <td style={styles.td}>
-                        <button style={styles.kickBtn} onClick={() => kickPlayer(p.id)}>
-                          Kick
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* ── Cycle events (summary phase) ─────────────────────────────────── */}
       {isSummary && state.cycleEvents.length > 0 && (
@@ -209,7 +254,14 @@ export default function HostScreen() {
       {!isSummary && state.adminSummary && (
         <div style={styles.card}>
           <h2 style={styles.cardTitle}>Analyst Summary</h2>
-          <p style={styles.summary}>{state.adminSummary}</p>
+          <p style={styles.summary}>{state.adminSummary.text}</p>
+        </div>
+      )}
+
+      {/* ── Decision countdown — fixed screen-centre overlay ─────────────── */}
+      {localSecs !== null && (
+        <div style={styles.countdownOverlay}>
+          {localSecs}
         </div>
       )}
     </div>
@@ -232,11 +284,25 @@ function MilestoneSummary() {
     .map(([id, { name, netWorth }]) => ({ id: Number(id), name, netWorth: parseFloat(netWorth) }))
     .sort((a, b) => b.netWorth - a.netWorth);
 
+  // Admin summary for the cycle that just completed (server sends it async, may arrive late)
+  const summaryReady = state.adminSummary !== null && state.adminSummary.cycle === state.cycle;
+
   return (
     <div style={styles.milestoneCard}>
-      <h2 style={styles.milestoneTitle}>Checkpoint — {state.cycle} cycles complete</h2>
+      <h2 style={styles.milestoneTitle}>Checkpoint — cycle {state.cycle}</h2>
+
+      {/* ── AI Narration — centrepiece ──────────────────────────────────── */}
+      <div style={styles.narratorBlock}>
+        <span style={styles.narratorLabel}>Analyst Narration</span>
+        {summaryReady ? (
+          <p style={styles.narratorText}>{state.adminSummary!.text}</p>
+        ) : (
+          <p style={styles.narratorLoading}>Generating analysis…</p>
+        )}
+      </div>
+
+      {/* ── Stats + leaderboard ─────────────────────────────────────────── */}
       <div style={styles.milestoneBody}>
-        {/* Price block */}
         <div style={styles.milestoneStat}>
           <span style={styles.milestoneStatLabel}>Price (last 5 cycles)</span>
           <span style={styles.milestoneStatValue}>
@@ -249,7 +315,6 @@ function MilestoneSummary() {
           </span>
         </div>
 
-        {/* Leaderboard */}
         {leaderboard.length > 0 && (
           <div style={styles.milestoneLeaderboard}>
             <span style={styles.milestoneStatLabel}>Leaderboard</span>
@@ -263,22 +328,23 @@ function MilestoneSummary() {
           </div>
         )}
       </div>
-
-      {/* Admin summary if available */}
-      {state.adminSummary && (
-        <p style={styles.milestoneSummaryText}>{state.adminSummary}</p>
-      )}
     </div>
   );
 }
 
 function MiniStat({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "center", minWidth: 64 }}>
-      <span style={{ fontSize: "0.75rem", color: "#8a8a80", letterSpacing: "0.06em", textTransform: "uppercase" as const, fontWeight: 600 }}>{label}</span>
-      <span style={{ fontSize: "1.1rem", fontWeight: "700" as const, color: color ?? "#3a3a36", marginTop: 2 }}>{value}</span>
+    <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "center", flex: "1 1 0", minWidth: 0 }}>
+      <span style={{ fontSize: "0.9rem", color: "#8a8a80", letterSpacing: "0.06em", textTransform: "uppercase" as const, fontWeight: 600, whiteSpace: "nowrap" as const }}>{label}</span>
+      <span style={{ fontSize: "1.75rem", fontWeight: "700" as const, color: color ?? "#3a3a36", marginTop: 2, whiteSpace: "nowrap" as const }}>{value}</span>
     </div>
   );
+}
+
+function fmtNum(n: number): string {
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(n) >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
+  return n.toFixed(2);
 }
 
 const styles = {
@@ -287,19 +353,50 @@ const styles = {
     flexDirection: "column" as const,
     alignItems: "stretch",
     gap: "1.25rem",
-    padding: "1rem 0",
+    padding: "1.5rem",
     maxWidth: "100%",
     margin: "0",
     width: "100%",
     minHeight: "100vh",
     background: "#f5f3ef",
-    paddingTop: `calc(1rem + ${TICKER_HEIGHT}px)`,
+    paddingTop: `calc(1.5rem + ${TICKER_HEIGHT}px)`,
+  },
+  logoText: {
+    fontSize: "1.8rem",
+    fontWeight: "800" as const,
+    color: "#18181a",
+    letterSpacing: "-0.02em",
+    lineHeight: 1,
   },
   header: {
     display: "flex",
     alignItems: "center",
-    flexWrap: "wrap" as const,
     gap: "1rem",
+    width: "100%",
+    minWidth: 0,
+  },
+  headerLeft: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "flex-start",
+    gap: "0.4rem",
+    minWidth: 0,
+  },
+  headerRight: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "flex-end",
+    gap: "0.4rem",
+    minWidth: 0,
+  },
+  headerButtons: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap" as const,
+    gap: "0.75rem",
+    minWidth: 0,
   },
   badge: {
     background: "#e8eef5",
@@ -312,16 +409,47 @@ const styles = {
     flexShrink: 0,
     textTransform: "uppercase" as const,
   },
+  roomBadge: {
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    background: "#f0f7f0",
+    border: "2px solid #1d6b1d",
+    borderRadius: 8,
+    padding: "0.25rem 1rem",
+    flexShrink: 0,
+  },
+  roomBadgeLabel: {
+    fontSize: "0.65rem",
+    color: "#5a8a5a",
+    fontWeight: 700,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase" as const,
+    lineHeight: 1,
+  },
+  roomBadgeCode: {
+    fontSize: "1.6rem",
+    fontWeight: "800" as const,
+    fontFamily: "monospace",
+    color: "#1d6b1d",
+    letterSpacing: "0.15em",
+    lineHeight: 1.1,
+  },
+  roomBadgePlayers: {
+    fontSize: "0.65rem",
+    color: "#5a8a5a",
+    fontWeight: 600,
+    lineHeight: 1,
+  },
   phase: { color: "#5a5a54", fontSize: "1.15rem", fontWeight: 500, flex: 1, minWidth: 0 },
-  codeInline: { fontFamily: "monospace", color: "#1d6b1d", fontWeight: 700 },
   startBtn: {
     background: "#1d6b1d",
     border: "none",
     color: "#ffffff",
-    fontSize: "1rem",
+    fontSize: "1.2rem",
     fontWeight: "700" as const,
-    padding: "0.6rem 1.8rem",
-    borderRadius: 6,
+    padding: "0.8rem 2.4rem",
+    borderRadius: 8,
     cursor: "pointer",
     flexShrink: 0,
     letterSpacing: "0.02em",
@@ -330,70 +458,140 @@ const styles = {
     background: "transparent",
     border: "2px solid #c8b060",
     color: "#7a5010",
-    fontSize: "1rem",
+    fontSize: "1.2rem",
     fontWeight: 600,
-    padding: "0.5rem 1.2rem",
-    borderRadius: 6,
+    padding: "0.75rem 0",
+    borderRadius: 8,
     cursor: "pointer",
-    flexShrink: 0,
+    flex: 1,
+    whiteSpace: "nowrap" as const,
+  },
+  autoBtn: {
+    background: "transparent",
+    border: "2px solid #8ab08a",
+    color: "#3a6a3a",
+    fontSize: "1.2rem",
+    fontWeight: 600,
+    padding: "0.75rem 0",
+    borderRadius: 8,
+    cursor: "pointer",
+    flex: 1,
+    whiteSpace: "nowrap" as const,
+  },
+  autoBtnOn: {
+    background: "#1d6b1d",
+    border: "2px solid #1d6b1d",
+    color: "#ffffff",
   },
   endBtn: {
     background: "transparent",
     border: "2px solid #c89090",
     color: "#7a1a1a",
-    fontSize: "1rem",
+    fontSize: "1.2rem",
     fontWeight: 600,
-    padding: "0.5rem 1.2rem",
-    borderRadius: 6,
+    padding: "0.75rem 0",
+    borderRadius: 8,
     cursor: "pointer",
-    flexShrink: 0,
+    width: "100%",
+    whiteSpace: "nowrap" as const,
   },
-  lobbyRow: {
-    display: "flex",
-    gap: "1.5rem",
-    alignItems: "flex-start",
-    flexWrap: "wrap" as const,
-  },
-  joinPanel: {
-    background: "#ffffff",
-    border: "1px solid #e2ddd6",
-    borderRadius: 10,
-    padding: "1.5rem",
+  rightBtnGroup: {
     display: "flex",
     flexDirection: "column" as const,
-    alignItems: "center",
-    gap: "0.6rem",
-    flexShrink: 0,
-    width: "clamp(200px, 18vw, 300px)",
+    gap: "0.5rem",
+    width: "16rem",
   },
-  qrImg: {
-    width: "100%",
-    height: "auto",
+  rightBtnRow: {
+    display: "flex",
+    gap: "0.5rem",
+  },
+  secsRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.25rem",
+  },
+  secsAdj: {
+    background: "transparent",
+    border: "1px solid #d1cbc3",
+    borderRadius: 5,
+    padding: "0.2rem 0.45rem",
+    fontSize: "0.8rem",
+    color: "#5a5a54",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontWeight: 600,
+  },
+  secsLabel: {
+    flex: 1,
+    textAlign: "center" as const,
+    fontSize: "0.9rem",
+    fontWeight: "700" as const,
+    color: "#3a3a36",
+    fontVariantNumeric: "tabular-nums",
+  },
+  playerCount: {
+    fontSize: "1.1rem",
+    color: "#5a8a5a",
+    fontWeight: 600,
+    flexShrink: 0,
+  },
+  chartRow: {
+    display: "flex",
+    gap: "1rem",
+    alignItems: "stretch",
+  },
+  qrToggleBtn: {
+    background: "transparent",
+    border: "1px solid #d1cbc3",
     borderRadius: 6,
-    display: "block",
+    padding: "0.3rem 0.8rem",
+    fontSize: "0.9rem",
+    color: "#5a5a54",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontWeight: 600,
+  },
+  qrDropdown: {
+    position: "absolute" as const,
+    top: "calc(100% + 6px)",
+    left: "50%",
+    transform: "translateX(-50%)",
+    background: "#ffffff",
+    border: "1px solid #e2ddd6",
+    borderRadius: 8,
+    padding: "0.4rem",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+    zIndex: 20,
   },
   joinLabel: {
     margin: 0,
-    fontSize: "0.75rem",
+    fontSize: "0.7rem",
     color: "#9a9a90",
     textTransform: "uppercase" as const,
     letterSpacing: "0.1em",
     fontWeight: 700,
   },
-  joinCode: {
-    fontSize: "clamp(2rem, 4vw, 4rem)",
-    fontWeight: "800" as const,
-    letterSpacing: "0.2em",
-    color: "#1d6b1d",
-    fontFamily: "monospace",
-    lineHeight: 1,
-  },
   joinSub: {
     margin: 0,
-    fontSize: "0.75rem",
+    fontSize: "0.7rem",
     color: "#9a9a90",
     textAlign: "center" as const,
   },
+  playerList: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "0.25rem",
+  },
+  playerRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.75rem",
+    padding: "0.4rem 0",
+    borderBottom: "1px solid #f0ede8",
+  },
+  playerNum: { fontSize: "0.75rem", color: "#b0aea8", minWidth: 18 },
+  playerName: { flex: 1, fontSize: "1rem", color: "#2a2a26" },
+  playerRole: { fontSize: "0.8rem", fontWeight: 600 },
   priceCard: {
     background: "#ffffff",
     border: "1px solid #e2ddd6",
@@ -403,19 +601,33 @@ const styles = {
   priceLine: {
     display: "flex",
     alignItems: "flex-start",
-    justifyContent: "space-between",
     flexWrap: "wrap" as const,
     gap: "1.5rem",
     marginBottom: "1.5rem",
+    minWidth: 0,
   },
   priceLabel: { margin: 0, color: "#8a8a80", fontSize: "1rem", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase" as const },
-  priceValue: { margin: "0.2rem 0 0", fontSize: "clamp(4rem, 6vw, 8rem)", fontWeight: "800" as const, color: "#1d6b1d", lineHeight: 1 },
-  countdown: { margin: "0.6rem 0 0", color: "#5a5a54", fontSize: "1.2rem", fontWeight: 600 },
+  priceValue: { margin: "0.2rem 0 0", fontSize: "clamp(2.5rem, 5vw, 6rem)", fontWeight: "800" as const, color: "#1d6b1d", lineHeight: 1 },
+  countdownOverlay: {
+    position: "fixed" as const,
+    inset: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    pointerEvents: "none" as const,
+    fontSize: "clamp(12rem, 28vw, 28rem)",
+    fontWeight: "900" as const,
+    color: "rgba(0,0,0,0.06)",
+    lineHeight: 1,
+    userSelect: "none" as const,
+    fontVariantNumeric: "tabular-nums",
+    zIndex: 5,
+  },
   chartBox: {
-    width: "100%",
     height: "clamp(260px, 22vw, 480px)",
     borderRadius: 6,
     overflow: "hidden",
+    minWidth: 0,
   },
   card: {
     background: "#ffffff",
@@ -425,24 +637,11 @@ const styles = {
   },
   cardTitle: { margin: "0 0 1rem", fontSize: "0.85rem", color: "#8a8a80", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const },
   empty: { color: "#9a9a90", fontSize: "1.1rem", margin: 0 },
-  table: { width: "100%", borderCollapse: "collapse" as const },
-  th: { textAlign: "left" as const, color: "#8a8a80", fontSize: "0.85rem", fontWeight: 700, padding: "0 1rem 0.75rem", letterSpacing: "0.07em", textTransform: "uppercase" as const },
-  td: { color: "#2a2a26", fontSize: "1.1rem", padding: "0.65rem 1rem", borderTop: "1px solid #e8e4df" },
-  kickBtn: {
-    background: "transparent",
-    border: "1px solid #c89090",
-    color: "#7a1a1a",
-    fontSize: "0.9rem",
-    fontWeight: 600,
-    padding: "0.35rem 0.9rem",
-    borderRadius: 4,
-    cursor: "pointer",
-  },
   headline: { margin: 0, color: "#2a2a26", fontStyle: "italic" as const, fontSize: "1.2rem", lineHeight: 1.7 },
   summary: { margin: 0, color: "#3a3a36", fontSize: "1.05rem", lineHeight: 1.8, whiteSpace: "pre-wrap" as const },
   marketMini: {
-    display: "flex", flexWrap: "wrap" as const, gap: "1rem 2rem",
-    alignItems: "flex-start",
+    display: "flex", flexWrap: "wrap" as const, gap: "1rem 1.5rem",
+    alignItems: "flex-start", flex: 1, minWidth: 0,
   },
   eventRow: {
     margin: "0 0 0.5rem",
@@ -456,12 +655,13 @@ const styles = {
     background: "#1d6b1d",
     border: "none",
     color: "#ffffff",
-    fontSize: "1rem",
+    fontSize: "1.2rem",
     fontWeight: "700" as const,
-    padding: "0.6rem 1.8rem",
-    borderRadius: 6,
+    padding: "0.75rem 0",
+    borderRadius: 8,
     cursor: "pointer",
-    flexShrink: 0,
+    flex: 1,
+    whiteSpace: "nowrap" as const,
     letterSpacing: "0.02em",
   },
   milestoneCard: {
@@ -471,12 +671,42 @@ const styles = {
     padding: "1.25rem 1.5rem",
   },
   milestoneTitle: {
-    margin: "0 0 1rem",
+    margin: "0 0 1.25rem",
     fontSize: "1rem",
     fontWeight: "700" as const,
     color: "#7a5010",
     letterSpacing: "0.06em",
     textTransform: "uppercase" as const,
+  },
+  narratorBlock: {
+    background: "#fffaea",
+    border: "1px solid #e8d890",
+    borderRadius: 8,
+    padding: "1rem 1.25rem",
+    marginBottom: "1.5rem",
+  },
+  narratorLabel: {
+    display: "block",
+    fontSize: "0.7rem",
+    fontWeight: "700" as const,
+    color: "#9a7020",
+    letterSpacing: "0.12em",
+    textTransform: "uppercase" as const,
+    marginBottom: "0.6rem",
+  },
+  narratorText: {
+    margin: 0,
+    fontSize: "1.15rem",
+    lineHeight: 1.75,
+    color: "#2a2a26",
+    whiteSpace: "pre-wrap" as const,
+  },
+  narratorLoading: {
+    margin: 0,
+    fontSize: "1rem",
+    color: "#b0a060",
+    fontStyle: "italic" as const,
+    animation: "pulse 1.5s ease-in-out infinite",
   },
   milestoneBody: {
     display: "flex",
@@ -506,7 +736,7 @@ const styles = {
     flexDirection: "column" as const,
     gap: "0.35rem",
     flex: 1,
-    minWidth: 180,
+    minWidth: 0,
   },
   leaderRow: {
     display: "flex",
@@ -514,32 +744,29 @@ const styles = {
     gap: "0.6rem",
     padding: "0.3rem 0",
     borderBottom: "1px solid #e8e4df",
+    minWidth: 0,
   },
   leaderRank: {
     fontSize: "0.8rem",
     fontWeight: "700" as const,
     color: "#8a8a80",
-    minWidth: 18,
+    flexShrink: 0,
+    width: 18,
   },
   leaderName: {
     flex: 1,
     fontSize: "1rem",
     color: "#2a2a26",
     fontWeight: 500,
+    minWidth: 0,
+    overflow: "hidden" as const,
+    textOverflow: "ellipsis" as const,
+    whiteSpace: "nowrap" as const,
   },
   leaderWorth: {
     fontSize: "1rem",
     fontWeight: "700" as const,
     color: "#1d6b1d",
     fontFamily: "monospace",
-  },
-  milestoneSummaryText: {
-    margin: "1rem 0 0",
-    color: "#3a3a36",
-    fontSize: "0.95rem",
-    lineHeight: 1.7,
-    whiteSpace: "pre-wrap" as const,
-    borderTop: "1px solid #e8ddb0",
-    paddingTop: "0.75rem",
   },
 } as const;

@@ -112,13 +112,12 @@ pub enum InboundMsg {
         player_id: PlayerId,
         action: PlayerAction,
     },
-    Disconnect {
-        player_id: PlayerId,
-    },
+    /// WebSocket closed (network drop / tab close). Player stays in world for reconnect.
+    Disconnect { player_id: PlayerId },
+    /// Player explicitly left (clicked Leave). Removes them from the world.
+    Leave { player_id: PlayerId },
     /// Admin commands (pause, end game, tune params).
-    Admin {
-        command: AdminCommand,
-    },
+    Admin { command: AdminCommand },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

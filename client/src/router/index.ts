@@ -3,13 +3,15 @@ import { createContext, useContext, useEffect, useState } from "react";
 // ── Route types ───────────────────────────────────────────────────────────────
 
 export type Route =
+  | { page: "welcome" } // / — landing page
   | { page: "create" }
-  | { page: "host" }   // /host — admin watch view, never joins as player
-  | { page: "join" }
+  | { page: "host" }    // /host — admin watch view, never joins as player
+  | { page: "join" }    // /join — join by code
   | { page: "code"; code: string } // /{4-digit-code}
-  | { page: "home" }; // / (treated same as join)
+  | { page: "home" };   // fallback (treated as welcome)
 
 function parsePath(path: string): Route {
+  if (path === "/" || path === "") return { page: "welcome" };
   if (path === "/create") return { page: "create" };
   if (path === "/host") return { page: "host" };
   if (path === "/join") return { page: "join" };

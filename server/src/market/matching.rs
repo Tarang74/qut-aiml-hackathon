@@ -151,6 +151,7 @@ mod tests {
             side,
             price: Some(price),
             quantity: qty,
+            placed_at_cycle: 0,
         }
     }
 
@@ -161,6 +162,7 @@ mod tests {
             side,
             price: None,
             quantity: qty,
+            placed_at_cycle: 0,
         }
     }
 

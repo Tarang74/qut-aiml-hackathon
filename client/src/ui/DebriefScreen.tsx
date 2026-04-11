@@ -32,7 +32,14 @@ export default function DebriefScreen() {
   if (!debrief) {
     return (
       <div style={s.root}>
-        <p style={s.loading}>Calculating results…</p>
+        <div style={s.header}>
+          <p style={s.loading}>Calculating results…</p>
+          {isHost && (
+            <button style={s.newGameBtn} onClick={endHostSession}>
+              New Game
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -167,7 +174,7 @@ export default function DebriefScreen() {
       {isHost && adminSummary && (
         <div style={s.card}>
           <p style={s.sectionLabel}>Analyst Summary</p>
-          <p style={s.summaryText}>{adminSummary}</p>
+          <p style={s.summaryText}>{adminSummary.text}</p>
         </div>
       )}
     </div>

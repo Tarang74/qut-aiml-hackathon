@@ -1,0 +1,10 @@
+**/.git
+**/.gitignore
+**/target
+**/node_modules
+client/dist
+.env*
+!.env.example
+terraform/
+scripts/
+*.md

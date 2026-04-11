@@ -1,0 +1,12 @@
+services:
+  aura-farmers:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - development.env
+    volumes:
+      # Mount the built frontend from the host so teammates can run
+      # `npm run build` locally and see changes without rebuilding the image.
+      - ./client/dist:/app/static
+    restart: unless-stopped

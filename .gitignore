@@ -1,0 +1,17 @@
+# Secrets / generated env files
+.env
+development.env
+terraform/terraform.tfvars
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/envs.tf
+
+# Build artifacts
+server/target/
+client/node_modules/
+client/dist/
+
+# Misc
+.DS_Store

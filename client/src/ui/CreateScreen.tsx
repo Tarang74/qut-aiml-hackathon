@@ -1,11 +1,10 @@
 /**
  * CreateScreen — /create
  *
- * Admin-only page. Generates a random 4-digit room code and shows the
- * shareable join link. No backend involvement — the code is purely a
- * URL-based invite. Anyone with the link can join the one running game.
+ * Admin-only page. Generates a random 4-digit room code and claims host
+ * ownership on the server via cookie-backed session.
  */
-import { useReducer } from "react";
+import { useEffect, useReducer } from "react";
 import { useNavigate } from "../router";
 import { useGameDispatch, useGameState } from "../state/store";
 import QRCode from "./QRCode";
@@ -29,6 +28,37 @@ export default function CreateScreen() {
   const { gameCode, knownPlayers } = useGameState();
   const [local, dispatch] = useReducer(localReducer, { code: gameCode });
 
+  useEffect(() => {
+    // Keep create-page code aligned with server-restored session code.
+    if (gameCode && gameCode !== local.code) {
+      dispatch({ type: "generate_with_code", code: gameCode });
+    }
+  }, [gameCode, local.code]);
+
+  function claimHostLobby(code: string, navigateToHost: boolean) {
+    fetch("/api/session/host", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ game_code: code }),
+    })
+      .then((r) => r.json())
+      .then((data: { game_code?: string | null }) => {
+        const resolvedCode = data.game_code ?? code;
+        gameDispatch({ type: "set_game_code", code: resolvedCode });
+        gameDispatch({ type: "set_host" });
+        dispatch({ type: "generate_with_code", code: resolvedCode });
+        if (navigateToHost) {
+          navigate("/host");
+        }
+      })
+      .catch(() => {
+        // Fallback to requested code if the response is unavailable.
+        gameDispatch({ type: "set_game_code", code });
+        gameDispatch({ type: "set_host" });
+        dispatch({ type: "generate_with_code", code });
+      });
+  }
+
   return (
     <div style={styles.root}>
       <h1 style={styles.title}>Aura Farmers</h1>
@@ -38,13 +68,7 @@ export default function CreateScreen() {
           style={styles.btn}
           onClick={() => {
             const code = String(Math.floor(1000 + Math.random() * 9000));
-            fetch("/api/game/code", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ game_code: code }),
-            }).catch(() => {});
-            gameDispatch({ type: "set_game_code", code });
-            dispatch({ type: "generate_with_code", code });
+            claimHostLobby(code, false);
           }}
         >
           Generate Room Code
@@ -103,13 +127,7 @@ export default function CreateScreen() {
               style={{ ...styles.btn, background: "#f5f3ef", color: "#6b6b63", border: "1.5px solid #e2ddd6" }}
               onClick={() => {
                 const code = String(Math.floor(1000 + Math.random() * 9000));
-                fetch("/api/game/code", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ game_code: code }),
-                }).catch(() => {});
-                gameDispatch({ type: "set_game_code", code });
-                dispatch({ type: "generate_with_code", code });
+                claimHostLobby(code, false);
               }}
             >
               New Code

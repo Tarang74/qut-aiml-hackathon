@@ -32,6 +32,8 @@ pub struct AppState {
     pub host_senders: Arc<Mutex<Vec<mpsc::UnboundedSender<Arc<String>>>>>,
     /// Current game code (set by host via /api/session/host).
     pub game_code: Arc<Mutex<Option<String>>>,
+    /// Unique token for this server process; used to invalidate stale cookies.
+    pub server_token: Arc<String>,
 }
 
 impl AppState {
@@ -50,6 +52,7 @@ impl AppState {
             personal_senders: Arc::new(DashMap::new()),
             host_senders: Arc::new(Mutex::new(Vec::new())),
             game_code: Arc::new(Mutex::new(None)),
+            server_token: Arc::new(Uuid::new_v4().to_string()),
         }
     }
 
@@ -99,6 +102,36 @@ pub async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: O
         Some(SessionData::Player { player_id, .. }) => PlayerId(*player_id),
         _ => state.allocate_player_id(),
     };
+
+    match &session_data {
+        Some(SessionData::Host { game_code }) => {
+            tracing::info!(
+                session_id = ?session_id,
+                game_code = ?game_code,
+                "ws connected (host session)"
+            );
+        }
+        Some(SessionData::Player {
+            player_id,
+            name,
+            role,
+        }) => {
+            tracing::info!(
+                session_id = ?session_id,
+                player_id = *player_id,
+                name = %name,
+                role = %role,
+                "ws connected (player session)"
+            );
+        }
+        _ => {
+            tracing::info!(
+                session_id = ?session_id,
+                allocated_player_id = player_id.0,
+                "ws connected (anonymous session)"
+            );
+        }
+    }
 
     // Register targeted sender.
     if is_host {
@@ -191,6 +224,7 @@ pub async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: O
                                     player_id,
                                     &state,
                                     session_id,
+                                    is_host,
                                     &mut socket,
                                 )
                                 .await;
@@ -218,6 +252,13 @@ pub async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: O
     drop(personal_rx);
     deregister(&state, player_id, is_host);
 
+    tracing::info!(
+        session_id = ?session_id,
+        player_id = player_id.0,
+        is_host,
+        "ws disconnected"
+    );
+
     // Notify sim of disconnect — player stays in world for reconnect.
     let _ = state
         .action_tx
@@ -243,14 +284,43 @@ async fn handle_client_msg(
     player_id: PlayerId,
     state: &AppState,
     session_id: Option<Uuid>,
-    _socket: &mut WebSocket,
+    is_host: bool,
+    socket: &mut WebSocket,
 ) {
     let inbound = match msg {
         ClientMsg::Join {
             name,
             role,
             client_nonce,
+            game_code,
         } => {
+            let expected_code = state.game_code.lock().unwrap().clone();
+            let valid_code = matches!(expected_code.as_ref(), Some(code) if code == &game_code);
+            if !valid_code {
+                tracing::warn!(
+                    session_id = ?session_id,
+                    player_id = player_id.0,
+                    provided_game_code = %game_code,
+                    expected_game_code = ?expected_code,
+                    "join rejected: invalid or inactive game code"
+                );
+                let err = serde_json::to_string(&ServerMsg::Error {
+                    message: "invalid or inactive game code".to_string(),
+                })
+                .unwrap_or_default();
+                let _ = socket.send(Message::Text(err.into())).await;
+                return;
+            }
+
+            tracing::info!(
+                session_id = ?session_id,
+                player_id = player_id.0,
+                name = %name,
+                role = ?role,
+                game_code = %game_code,
+                "join accepted"
+            );
+
             // Upgrade anonymous session to Player.
             if let Some(sid) = session_id {
                 let role_str = format!("{role:?}").to_lowercase();
@@ -271,9 +341,36 @@ async fn handle_client_msg(
             }
         }
         ClientMsg::Action { action } => InboundMsg::Action { player_id, action },
-        ClientMsg::Admin { command } => InboundMsg::Admin { command },
+        ClientMsg::Admin { command } => {
+            if !is_host {
+                tracing::warn!(
+                    session_id = ?session_id,
+                    player_id = player_id.0,
+                    command = ?command,
+                    "admin command rejected: non-host session"
+                );
+                let err = serde_json::to_string(&ServerMsg::Error {
+                    message: "admin commands require a host session".to_string(),
+                })
+                .unwrap_or_default();
+                let _ = socket.send(Message::Text(err.into())).await;
+                return;
+            }
+            tracing::info!(
+                session_id = ?session_id,
+                player_id = player_id.0,
+                command = ?command,
+                "admin command accepted"
+            );
+            InboundMsg::Admin { command }
+        }
         ClientMsg::Ping => return,
         ClientMsg::Leave => {
+            tracing::info!(
+                session_id = ?session_id,
+                player_id = player_id.0,
+                "player leave requested"
+            );
             // Invalidate session so reconnect won't auto-rejoin.
             if let Some(sid) = session_id {
                 state.session_store.remove(sid);

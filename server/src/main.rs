@@ -23,6 +23,7 @@ use net::sessions::SessionData;
 use sim::world::World;
 
 const PLAYER_ID_START: u64 = 2001;
+const COOKIE_MAX_AGE_SECS: u64 = 2 * 60 * 60;
 
 #[tokio::main]
 async fn main() {
@@ -64,6 +65,7 @@ async fn main() {
         .route("/api/game/code", post(api_set_game_code))
         .route("/api/session", get(api_session_get))
         .route("/api/session/host", post(api_session_host))
+        .route("/api/session/clear", post(api_session_clear))
         .fallback_service(ServeDir::new(&cfg.static_dir).fallback(spa_fallback))
         .with_state(state);
 
@@ -90,22 +92,38 @@ async fn ws_handler(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let session_id = match net::sessions::SessionStore::parse_cookie(cookie_str) {
-        Some(id) if state.session_store.get(id).is_some() => id,
+    let server_cookie_ok =
+        net::sessions::SessionStore::parse_cookie_value(cookie_str, "aura_server")
+            .is_some_and(|v| v == *state.server_token);
+
+    let session_id = match (
+        server_cookie_ok,
+        net::sessions::SessionStore::parse_cookie(cookie_str),
+    ) {
+        (true, Some(id)) if state.session_store.get(id).is_some() => id,
         _ => state.session_store.create(SessionData::Anonymous),
     };
+
+    let server_token = state.server_token.clone();
 
     let mut response = ws
         .on_upgrade(move |socket| net::gateway::handle_socket(socket, state, Some(session_id)))
         .into_response();
 
-    // Set or refresh session cookie (7 days).
+    // Set or refresh session cookie (2 hours).
     let cookie = format!(
-        "aura_session={}; Path=/; SameSite=Lax; Max-Age=604800",
-        session_id
+        "aura_session={}; Path=/; SameSite=Lax; Max-Age={}",
+        session_id, COOKIE_MAX_AGE_SECS
+    );
+    let server_cookie = format!(
+        "aura_server={}; Path=/; SameSite=Lax; Max-Age={}",
+        server_token, COOKIE_MAX_AGE_SECS
     );
     if let Ok(v) = cookie.parse() {
-        response.headers_mut().insert(header::SET_COOKIE, v);
+        response.headers_mut().append(header::SET_COOKIE, v);
+    }
+    if let Ok(v) = server_cookie.parse() {
+        response.headers_mut().append(header::SET_COOKIE, v);
     }
 
     response
@@ -177,7 +195,14 @@ async fn api_session_get(
         .get("cookie")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let sid = net::sessions::SessionStore::parse_cookie(cookie_str);
+    let server_cookie_ok =
+        net::sessions::SessionStore::parse_cookie_value(cookie_str, "aura_server")
+            .is_some_and(|v| v == *state.server_token);
+    let sid = if server_cookie_ok {
+        net::sessions::SessionStore::parse_cookie(cookie_str)
+    } else {
+        None
+    };
 
     let data = sid.and_then(|id| state.session_store.get(id));
     match data {
@@ -224,38 +249,97 @@ async fn api_session_host(
     State(state): State<AppState>,
     Json(body): Json<HostSessionRequest>,
 ) -> impl IntoResponse {
-    // Store game_code in AppState so /api/lobby can expose it.
-    if let Some(ref code) = body.game_code {
-        *state.game_code.lock().unwrap() = Some(code.clone());
-    }
-
     // Reuse existing session if present, otherwise create one.
     let cookie_str = headers
         .get("cookie")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let session_id = match net::sessions::SessionStore::parse_cookie(cookie_str) {
-        Some(id) => {
+    let server_cookie_ok =
+        net::sessions::SessionStore::parse_cookie_value(cookie_str, "aura_server")
+            .is_some_and(|v| v == *state.server_token);
+    let mut locked_to_existing = false;
+    let mut effective_code = body.game_code.clone();
+
+    let session_id = match (
+        server_cookie_ok,
+        net::sessions::SessionStore::parse_cookie(cookie_str),
+    ) {
+        (true, Some(id)) => {
+            if let Some(SessionData::Host {
+                game_code: Some(existing_code),
+            }) = state.session_store.get(id)
+            {
+                effective_code = Some(existing_code);
+                locked_to_existing = true;
+            }
             state.session_store.set(
                 id,
                 SessionData::Host {
-                    game_code: body.game_code,
+                    game_code: effective_code.clone(),
                 },
             );
             id
         }
-        None => state.session_store.create(SessionData::Host {
-            game_code: body.game_code,
+        _ => state.session_store.create(SessionData::Host {
+            game_code: effective_code.clone(),
         }),
     };
 
+    // Reflect the effective code (requested or locked existing) in /api/lobby.
+    *state.game_code.lock().unwrap() = effective_code.clone();
+
     let cookie = format!(
-        "aura_session={}; Path=/; SameSite=Lax; Max-Age=604800",
-        session_id
+        "aura_session={}; Path=/; SameSite=Lax; Max-Age={}",
+        session_id, COOKIE_MAX_AGE_SECS
+    );
+    let server_cookie = format!(
+        "aura_server={}; Path=/; SameSite=Lax; Max-Age={}",
+        state.server_token, COOKIE_MAX_AGE_SECS
     );
     (
         StatusCode::OK,
-        [(header::SET_COOKIE, cookie)],
+        [
+            (header::SET_COOKIE, cookie),
+            (header::SET_COOKIE, server_cookie),
+        ],
+        Json(serde_json::json!({
+            "ok": true,
+            "game_code": effective_code,
+            "locked_to_existing": locked_to_existing,
+        })),
+    )
+}
+
+// ── /api/session/clear (POST) ────────────────────────────────────────────────
+
+async fn api_session_clear(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    let cookie_str = headers
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let server_cookie_ok =
+        net::sessions::SessionStore::parse_cookie_value(cookie_str, "aura_server")
+            .is_some_and(|v| v == *state.server_token);
+
+    if server_cookie_ok {
+        if let Some(sid) = net::sessions::SessionStore::parse_cookie(cookie_str) {
+            let was_host = matches!(state.session_store.get(sid), Some(SessionData::Host { .. }));
+            state.session_store.remove(sid);
+            if was_host {
+                *state.game_code.lock().unwrap() = None;
+            }
+        }
+    }
+
+    let clear_session = "aura_session=; Path=/; SameSite=Lax; Max-Age=0";
+    let clear_server = "aura_server=; Path=/; SameSite=Lax; Max-Age=0";
+    (
+        StatusCode::OK,
+        [
+            (header::SET_COOKIE, clear_session),
+            (header::SET_COOKIE, clear_server),
+        ],
         Json(serde_json::json!({ "ok": true })),
     )
 }

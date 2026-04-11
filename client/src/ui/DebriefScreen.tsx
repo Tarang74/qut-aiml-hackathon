@@ -73,9 +73,13 @@ export default function DebriefScreen() {
   }
 
   function quitGame() {
-    // Tell the server to remove this connection's session so a fresh join is clean.
-    send({ type: "leave" });
+    // For players, remove them from the world; host tabs don't own a player entity.
+    if (!isHost) {
+      send({ type: "leave" });
+    }
+    fetch("/api/session/clear", { method: "POST", keepalive: true }).catch(() => {});
     document.cookie = "aura_session=; Max-Age=0; Path=/";
+    document.cookie = "aura_server=; Max-Age=0; Path=/";
     sessionStorage.removeItem(SS_HOST);
     if (isHost) {
       dispatch({ type: "clear_host" });

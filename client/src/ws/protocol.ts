@@ -191,7 +191,7 @@ export type AdminCommand =
   | { cmd: "continue_game" };
 
 export type ClientMsg =
-  | { type: "join"; name: string; role: Role; client_nonce: string }
+  | { type: "join"; name: string; role: Role; client_nonce: string; game_code: string }
   | { type: "action"; action: PlayerAction }
   | { type: "admin"; command: AdminCommand }
   | { type: "ping" }

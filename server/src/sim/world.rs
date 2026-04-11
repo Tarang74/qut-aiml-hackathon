@@ -1022,7 +1022,9 @@ impl World {
         } else {
             self.price
         };
-        WorldView { price: effective_price }
+        WorldView {
+            price: effective_price,
+        }
     }
 
     fn run_npc_farm_autopilot(&mut self) -> Vec<crate::agents::PendingOrder> {

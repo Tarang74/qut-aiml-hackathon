@@ -70,8 +70,8 @@ export function useWs(
 
       ws.onclose = () => {
         clearInterval(pingTimer);
-        onDisconnectRef.current?.();
         if (alive) {
+          onDisconnectRef.current?.();
           reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
         }
       };

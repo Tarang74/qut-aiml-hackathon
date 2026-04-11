@@ -6,7 +6,7 @@
  *
  * ── For teammates ────────────────────────────────────────────────────────────
  * Replace the layout below with real design.
- * Required behaviour: call `send({ type: "join", name, role })` on submit.
+ * Required behaviour: call send({ type: "join", name, role, client_nonce, game_code }) on submit.
  *
  * Available hooks:
  *   const state = useGameState();  // read-only
@@ -82,7 +82,7 @@ export default function LobbyScreen({ code }: Props) {
     if (!name || !connected) return;
     const nonce = Math.random().toString(36).slice(2, 10);
     globalDispatch({ type: "set_join_nonce", nonce });
-    send({ type: "join", name, role: form.role, client_nonce: nonce });
+    send({ type: "join", name, role: form.role, client_nonce: nonce, game_code: code });
   }
 
   // ── Render ────────────────────────────────────────────────────────────────

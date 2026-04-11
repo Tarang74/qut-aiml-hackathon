@@ -476,7 +476,7 @@ pub async fn run_loop(
                     world.game_over_reason
                 );
                 clear_code("game over");
-            on_game_end();
+                on_game_end();
                 let stats = world.compute_debrief();
                 broadcast_msg(&broadcast_tx, &ServerMsg::Debrief { stats });
                 spawn_debrief_narrative(&world, broadcast_tx.clone(), api_key.clone());
@@ -524,7 +524,18 @@ fn handle_inbound(
             role,
             client_nonce,
         } => {
+            let joining_name = name.clone();
+            let joining_role = format!("{role:?}");
             world.register_player(player_id, name.clone(), role);
+            tracing::info!(
+                player_id = player_id.0,
+                name = %joining_name,
+                role = %joining_role,
+                total_players = world.players.len(),
+                phase = ?world.phase,
+                cycle = world.cycle,
+                "player joined world"
+            );
             broadcast_msg(
                 tx,
                 &ServerMsg::Welcome {
@@ -546,6 +557,13 @@ fn handle_inbound(
         InboundMsg::Leave { player_id } => {
             tracing::info!("Player {player_id:?} left explicitly");
             world.players.remove(&player_id);
+            tracing::info!(
+                player_id = player_id.0,
+                total_players = world.players.len(),
+                phase = ?world.phase,
+                cycle = world.cycle,
+                "player removed from world"
+            );
             broadcast_msg(
                 tx,
                 &ServerMsg::PlayerLeft {

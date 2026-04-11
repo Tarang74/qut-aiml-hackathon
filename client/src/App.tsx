@@ -67,6 +67,11 @@ export default function App() {
         } else if (data.type === "player" && data.session_id) {
           // Set nonce = session_id so the auto-sent Welcome can be claimed.
           dispatch({ type: "set_join_nonce", nonce: data.session_id });
+        } else {
+          // No valid server session: clear any stale local identity.
+          sessionStorage.removeItem(SS_HOST);
+          dispatch({ type: "clear_host" });
+          dispatch({ type: "leave_game" });
         }
       })
       .catch(() => {
@@ -99,19 +104,15 @@ export default function App() {
     // auto-rejoin this client into the next game on reconnect.
     if (msg.type === "game_reset" || msg.type === "game_over") {
       document.cookie = "aura_session=; Max-Age=0; Path=/";
+      document.cookie = "aura_server=; Max-Age=0; Path=/";
     }
     dispatch({ type: "server_msg", msg });
   }, []);
   const onConnect = useCallback(() => dispatch({ type: "ws_connected" }), []);
   const onDisconnect = useCallback(() => {
-    // Server restart invalidates the in-memory session store.
-    // Clear the cookie and reset identity so the user lands back on the home screen.
-    document.cookie = "aura_session=; Max-Age=0; Path=/";
-    sessionStorage.removeItem(SS_HOST);
+    // Keep session + identity on transient disconnect so auto-reconnect can
+    // reclaim the same player/host session after refresh or short outages.
     dispatch({ type: "ws_disconnected" });
-    dispatch({ type: "clear_host" });
-    dispatch({ type: "leave_game" });
-    navigateRef.current("/");
   }, []);
   const send = useWs(onMessage, onConnect, onDisconnect);
 
@@ -119,12 +120,8 @@ export default function App() {
 
   let screen: React.ReactNode;
 
-  if (state.isHost) {
-    if (state.phase === "game_over") {
-      screen = <DebriefScreen />;
-    } else {
-      screen = <HostScreen />;
-    }
+  if (state.isHost && route.page === "host") {
+    screen = state.phase === "game_over" ? <DebriefScreen /> : <HostScreen />;
   } else if (state.myPlayerId !== null) {
     if (state.phase === "game_over") {
       screen = <DebriefScreen />;
@@ -141,7 +138,9 @@ export default function App() {
         screen = <CreateScreen />;
         break;
       case "host":
-        screen = <CreateScreen />;
+        screen = state.isHost
+          ? (state.phase === "game_over" ? <DebriefScreen /> : <HostScreen />)
+          : <CreateScreen />;
         break;
       case "code":
         screen = <LobbyScreen code={route.code} />;
@@ -162,7 +161,7 @@ export default function App() {
       <GameDispatchContext.Provider value={dispatch}>
         <WsSendContext.Provider value={send}>
           <NavigateContext.Provider value={navigate}>
-            {state.isHost && <NewsTicker />}
+            {state.isHost && route.page === "host" && <NewsTicker />}
             <EventBanner />
             <EmojiConfetti />
             {screen}

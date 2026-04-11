@@ -143,7 +143,9 @@ export type GameAction =
   // Set before sending a join message so the client can claim only its own welcome
   | { type: "set_join_nonce"; nonce: string }
   // Clear the host flag (e.g. after game_reset so old sessions don't linger)
-  | { type: "clear_host" };
+  | { type: "clear_host" }
+  // Player voluntarily leaves the game (clears player identity, returns to join)
+  | { type: "leave_game" };
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
@@ -172,6 +174,15 @@ function reducer(state: GameState, action: GameAction): GameState {
 
     case "clear_host":
       return { ...state, isHost: false };
+
+    case "leave_game":
+      return {
+        ...state,
+        myPlayerId: null,
+        myName: "",
+        myRole: "",
+        error: null,
+      };
 
     case "set_join_nonce":
       return { ...state, pendingJoinNonce: action.nonce };

@@ -1,234 +1,207 @@
 /**
- * PriceChart — Three.js line chart for the price history.
- * Fills its container; call from a div with explicit height.
- * HTML overlay renders Y-axis price labels and X-axis index labels.
+ * PriceChart — 2D canvas price history chart.
+ *
+ * Switched from Three.js to 2D canvas because Three.js LineBasicMaterial
+ * linewidth is ignored on WebGL2 (always 1px). Canvas gives real lineWidth,
+ * native gradients, and crisp text at any DPI.
  */
 import { useEffect, useRef } from "react";
-import * as THREE from "three";
 
 interface Props {
   history: string[];
 }
 
-// Vertical padding fraction used when mapping prices → NDC y.
-const PAD = 0.1;
-
-// How many horizontal grid bands (grid lines = BANDS + 1).
+// Inner chart padding in logical pixels (before devicePixelRatio scaling).
+const PAD = { top: 14, right: 18, bottom: 32, left: 60 };
+// Number of horizontal grid bands (= gridlines - 1).
 const H_BANDS = 4;
-// How many vertical grid bands (grid lines = V_BANDS + 1).
-const V_BANDS = 6;
 
-export default function PriceChart({ history }: Props) {
-  const mountRef = useRef<HTMLDivElement>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
-  const lineRef = useRef<THREE.Line | null>(null);
-  const glowLineRef = useRef<THREE.Line | null>(null);
+function draw(canvas: HTMLCanvasElement, prices: number[]) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
 
-  // Initialise Three.js once.
-  useEffect(() => {
-    const container = mountRef.current;
-    if (!container) return;
+  const W = canvas.width;
+  const H = canvas.height;
+  const dpr = window.devicePixelRatio || 1;
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xfaf8f4);
-    sceneRef.current = scene;
+  // Scale all drawing to match devicePixelRatio.
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const W = container.clientWidth || 600;
-    const H = container.clientHeight || 300;
+  const cssW = W / dpr;
+  const cssH = H / dpr;
+  const cW = cssW - PAD.left - PAD.right;   // chart inner width
+  const cH = cssH - PAD.top - PAD.bottom;   // chart inner height
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(W, H);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    container.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
+  // ── Clear ──────────────────────────────────────────────────────────────────
+  ctx.clearRect(0, 0, cssW, cssH);
 
-    // Orthographic camera: coordinates go -1..1 in both axes.
-    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-    cam.position.z = 1;
-    cameraRef.current = cam;
+  // ── Background ─────────────────────────────────────────────────────────────
+  ctx.fillStyle = "#faf8f4";
+  ctx.fillRect(0, 0, cssW, cssH);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(PAD.left, PAD.top, cW, cH);
 
-    // Faint grid lines.
-    const gridMat = new THREE.LineBasicMaterial({ color: 0xe0ddd8 });
-    for (let i = 0; i <= H_BANDS; i++) {
-      const y = (i / H_BANDS) * 2 - 1;
-      const pts = [new THREE.Vector3(-1, y, 0), new THREE.Vector3(1, y, 0)];
-      scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), gridMat));
-    }
-    for (let i = 0; i <= V_BANDS; i++) {
-      const x = (i / V_BANDS) * 2 - 1;
-      const pts = [new THREE.Vector3(x, -1, 0), new THREE.Vector3(x, 1, 0)];
-      scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), gridMat));
-    }
-
-    // Glow line (slightly wider, dimmer green underneath for depth).
-    const glowGeo = new THREE.BufferGeometry();
-    const glowMat = new THREE.LineBasicMaterial({ color: 0xa8d4a8, linewidth: 4 });
-    const glowLine = new THREE.Line(glowGeo, glowMat);
-    scene.add(glowLine);
-    glowLineRef.current = glowLine;
-
-    // Main price line.
-    const lineGeo = new THREE.BufferGeometry();
-    const lineMat = new THREE.LineBasicMaterial({ color: 0x1d6b1d, linewidth: 2 });
-    const line = new THREE.Line(lineGeo, lineMat);
-    scene.add(line);
-    lineRef.current = line;
-
-    // Resize observer.
-    const ro = new ResizeObserver(() => {
-      const w = container.clientWidth;
-      const h = container.clientHeight;
-      if (w > 0 && h > 0) {
-        renderer.setSize(w, h);
-        renderer.render(scene, cam);
-      }
-    });
-    ro.observe(container);
-
-    renderer.render(scene, cam);
-
-    return () => {
-      ro.disconnect();
-      renderer.dispose();
-      if (container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
-      }
-    };
-  }, []);
-
-  // Redraw whenever history changes.
-  useEffect(() => {
-    const line = lineRef.current;
-    const glowLine = glowLineRef.current;
-    const renderer = rendererRef.current;
-    const scene = sceneRef.current;
-    const cam = cameraRef.current;
-    if (!line || !glowLine || !renderer || !scene || !cam) return;
-
-    const prices = history.map(parseFloat).filter(isFinite);
-    if (prices.length < 2) return;
-
-    const minP = Math.min(...prices);
-    const maxP = Math.max(...prices);
-    const range = maxP - minP || 1;
-
-    const positions = new Float32Array(prices.length * 3);
-    for (let i = 0; i < prices.length; i++) {
-      positions[i * 3]     = (i / (prices.length - 1)) * 2 - 1;
-      positions[i * 3 + 1] = ((prices[i] - minP) / range) * (2 - PAD * 2) - (1 - PAD);
-      positions[i * 3 + 2] = 0;
-    }
-
-    const attr = new THREE.BufferAttribute(positions, 3);
-    line.geometry.setAttribute("position", attr);
-    line.geometry.computeBoundingSphere();
-    glowLine.geometry.setAttribute("position", attr.clone());
-    glowLine.geometry.computeBoundingSphere();
-
-    renderer.render(scene, cam);
-  }, [history]);
-
-  // --- Label computation (pure, from history prop) ---
-  const prices = history.map(parseFloat).filter(isFinite);
   const hasData = prices.length >= 2;
   const minP = hasData ? Math.min(...prices) : 0;
   const maxP = hasData ? Math.max(...prices) : 1;
   const range = maxP - minP || 1;
 
-  // Y-axis: one label per horizontal grid line.
-  // NDC y values: from -1 (bottom) to +1 (top) in H_BANDS+1 steps.
-  // NDC y → % from top: (1 - ndc_y) / 2 * 100
-  // NDC y → price: (ndc_y + (1-PAD)) / (2 - 2*PAD) * range + minP
-  const yLabels = hasData
-    ? Array.from({ length: H_BANDS + 1 }, (_, i) => {
-        const ndc = (i / H_BANDS) * 2 - 1; // -1 .. +1
-        const topPct = ((1 - ndc) / 2) * 100;
-        const price = ((ndc + (1 - PAD)) / (2 - 2 * PAD)) * range + minP;
-        // Clamp translateY so labels at the very edge stay visible.
-        const ty = topPct <= 5 ? 0 : topPct >= 95 ? -100 : -50;
-        return { topPct, price, ty };
-      })
-    : [];
+  // Price → Y pixel (with 5% vertical padding so extremes don't clip).
+  const pToY = (p: number) =>
+    PAD.top + cH - ((p - minP) / range) * cH * 0.9 - cH * 0.05;
+  // Index → X pixel.
+  const iToX = (i: number) =>
+    PAD.left + (prices.length > 1 ? (i / (prices.length - 1)) * cW : 0);
 
-  // X-axis: labels at each vertical grid line.
-  // NDC x → history index: (ndc_x + 1) / 2 * (len - 1)
-  const xLabels = hasData
-    ? Array.from({ length: V_BANDS + 1 }, (_, i) => {
-        const frac = i / V_BANDS; // 0 .. 1
-        const idx = Math.round(frac * (prices.length - 1));
-        // Clamp translateX so edge labels don't overflow.
-        const tx = i === 0 ? 0 : i === V_BANDS ? -100 : -50;
-        return { leftPct: frac * 100, idx, tx };
-      })
-    : [];
+  // ── Grid lines ─────────────────────────────────────────────────────────────
+  ctx.strokeStyle = "#ccc8c0";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= H_BANDS; i++) {
+    const y = PAD.top + (i / H_BANDS) * cH;
+    ctx.beginPath();
+    ctx.moveTo(PAD.left, y);
+    ctx.lineTo(PAD.left + cW, y);
+    ctx.stroke();
+  }
+
+  // ── Y-axis labels ──────────────────────────────────────────────────────────
+  // Drawn in the left padding band — can never overlap the chart line.
+  ctx.font = `600 13px 'DM Sans', system-ui, sans-serif`;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#5a5a54";
+  for (let i = 0; i <= H_BANDS; i++) {
+    const y = PAD.top + (i / H_BANDS) * cH;
+    const price = maxP - (i / H_BANDS) * range;
+    ctx.fillText(`$${price.toFixed(0)}`, PAD.left - 8, y);
+  }
+
+  if (!hasData) return;
+
+  // ── Area fill ──────────────────────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.moveTo(iToX(0), pToY(prices[0]));
+  for (let i = 1; i < prices.length; i++) ctx.lineTo(iToX(i), pToY(prices[i]));
+  ctx.lineTo(iToX(prices.length - 1), PAD.top + cH);
+  ctx.lineTo(iToX(0), PAD.top + cH);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + cH);
+  grad.addColorStop(0, "rgba(29,107,29,0.18)");
+  grad.addColorStop(1, "rgba(29,107,29,0)");
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // ── Glow pass (wide, soft) ─────────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.moveTo(iToX(0), pToY(prices[0]));
+  for (let i = 1; i < prices.length; i++) ctx.lineTo(iToX(i), pToY(prices[i]));
+  ctx.strokeStyle = "rgba(29,107,29,0.22)";
+  ctx.lineWidth = 7;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke();
+
+  // ── Main line ──────────────────────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.moveTo(iToX(0), pToY(prices[0]));
+  for (let i = 1; i < prices.length; i++) ctx.lineTo(iToX(i), pToY(prices[i]));
+  ctx.strokeStyle = "#1d6b1d";
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke();
+
+  // ── Current price dot ──────────────────────────────────────────────────────
+  const lx = iToX(prices.length - 1);
+  const ly = pToY(prices[prices.length - 1]);
+  // Outer pulse ring
+  ctx.beginPath();
+  ctx.arc(lx, ly, 7, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(29,107,29,0.25)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // Solid dot
+  ctx.beginPath();
+  ctx.arc(lx, ly, 4, 0, Math.PI * 2);
+  ctx.fillStyle = "#1d6b1d";
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(lx, ly, 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+
+  // ── X-axis labels ──────────────────────────────────────────────────────────
+  // Only show 3–4 ticks so they can't crowd together.
+  const n = prices.length;
+  const xTicks: Array<{ idx: number; label: string; align: CanvasTextAlign }> = [
+    { idx: 0,                        label: "start",         align: "left"   as CanvasTextAlign },
+    { idx: Math.round(n * 0.33),     label: `t${Math.round(n * 0.33)}`,  align: "center" as CanvasTextAlign },
+    { idx: Math.round(n * 0.67),     label: `t${Math.round(n * 0.67)}`,  align: "center" as CanvasTextAlign },
+    { idx: n - 1,                    label: "now",           align: "right"  as CanvasTextAlign },
+  ]
+    // Deduplicate adjacent same-index ticks when history is very short.
+    .filter((t, i, arr) => i === 0 || t.idx !== arr[i - 1].idx);
+
+  ctx.font = `500 12px 'DM Sans', system-ui, sans-serif`;
+  ctx.textBaseline = "bottom";
+  ctx.fillStyle = "#9a9a90";
+  for (const { idx, label, align } of xTicks) {
+    ctx.textAlign = align;
+    const x = Math.min(Math.max(iToX(idx), PAD.left + 2), PAD.left + cW - 2);
+    ctx.fillText(label, x, cssH - 6);
+  }
+}
+
+export default function PriceChart({ history }: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const prices = history.map(parseFloat).filter(isFinite);
+
+  // Initial setup + ResizeObserver.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const container = canvas.parentElement!;
+    const dpr = window.devicePixelRatio || 1;
+
+    function resize() {
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      if (w <= 0 || h <= 0) return;
+      canvas!.width = w * dpr;
+      canvas!.height = h * dpr;
+      canvas!.style.width = `${w}px`;
+      canvas!.style.height = `${h}px`;
+    }
+
+    const ro = new ResizeObserver(() => {
+      resize();
+      // Re-read prices from the ref after resize.
+      const latestPrices = Array.from(
+        canvas!.dataset.prices ? JSON.parse(canvas!.dataset.prices) as number[] : []
+      );
+      draw(canvas!, latestPrices);
+    });
+    ro.observe(container);
+    resize();
+
+    return () => ro.disconnect();
+  }, []);
+
+  // Redraw whenever history changes.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    // Stash prices on the element so the ResizeObserver can redraw with latest data.
+    canvas.dataset.prices = JSON.stringify(prices);
+    draw(canvas, prices);
+  }, [history]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      {/* Three.js canvas mount */}
-      <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
-
-      {/* Y-axis price labels (left edge) */}
-      {yLabels.map(({ topPct, price, ty }, i) => (
-        <span
-          key={i}
-          style={{
-            position: "absolute",
-            left: 6,
-            top: `${topPct}%`,
-            transform: `translateY(${ty}%)`,
-            fontSize: 11,
-            fontFamily: "monospace",
-            color: "#5a5a54",
-            background: "rgba(250,248,244,0.82)",
-            borderRadius: 2,
-            padding: "0 3px",
-            lineHeight: 1.4,
-            pointerEvents: "none",
-            whiteSpace: "nowrap",
-          }}
-        >
-          ${price.toFixed(2)}
-        </span>
-      ))}
-
-      {/* X-axis index labels (bottom edge) */}
-      {xLabels.map(({ leftPct, idx, tx }, i) => (
-        <span
-          key={i}
-          style={{
-            position: "absolute",
-            bottom: 4,
-            left: `${leftPct}%`,
-            transform: `translateX(${tx}%)`,
-            fontSize: 10,
-            fontFamily: "monospace",
-            color: "#8a8a80",
-            pointerEvents: "none",
-            lineHeight: 1,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {idx === 0 ? "start" : idx === prices.length - 1 ? "now" : `t${idx}`}
-        </span>
-      ))}
-
-      {/* Axis labels */}
-      <span style={{
-        position: "absolute",
-        left: 6,
-        top: "50%",
-        transform: "translateY(-50%) rotate(-90deg) translateX(50%)",
-        transformOrigin: "left center",
-        fontSize: 10,
-        color: "#aaa8a0",
-        pointerEvents: "none",
-        letterSpacing: "0.06em",
-        textTransform: "uppercase",
-      }}>
-        Price
-      </span>
+      <canvas
+        ref={canvasRef}
+        style={{ display: "block", width: "100%", height: "100%" }}
+      />
     </div>
   );
 }

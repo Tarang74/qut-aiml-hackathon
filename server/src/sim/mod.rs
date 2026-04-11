@@ -123,6 +123,9 @@ pub async fn run_loop(
         } = &msg
         {
             tracing::info!("Host started the game");
+            // Freeze cycle 0 immediately so players can read before the timer starts.
+            world.paused = true;
+            broadcast_msg(&broadcast_tx, &ServerMsg::GamePaused {});
             break 'lobby;
         }
         let reset = handle_inbound(&mut world, msg, &broadcast_tx, &snapshot);
@@ -151,7 +154,14 @@ pub async fn run_loop(
         let mut decision_end = Instant::now() + Duration::from_secs(world.cycle_duration_secs);
         let deadline = sleep_until(decision_end);
         tokio::pin!(deadline);
-        let mut paused_at: Option<Instant> = None;
+        // If already paused when the phase opens (e.g. cycle 0), freeze the deadline
+        // immediately so resume logic can extend it correctly.
+        let mut paused_at: Option<Instant> = if world.paused {
+            deadline.as_mut().reset(Instant::now() + Duration::from_secs(86400));
+            Some(Instant::now())
+        } else {
+            None
+        };
 
         let mut reset_requested = false;
         let mut all_locked_in = false;

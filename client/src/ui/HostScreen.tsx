@@ -42,8 +42,6 @@ export default function HostScreen() {
   const price = parseFloat(state.price).toFixed(2);
   const isSummary = state.phase === "summary";
   const phase = state.phase === "lobby" ? "Waiting for players…" : `${state.phase} — cycle ${state.cycle}`;
-  const joinUrl = state.gameCode ? `${window.location.origin}/${state.gameCode}` : null;
-
   function kickPlayer(playerId: number) {
     send({ type: "admin", command: { cmd: "kick_player", player_id: playerId } });
   }
@@ -67,9 +65,11 @@ export default function HostScreen() {
   return (
     <div style={styles.root}>
       <div style={styles.header}>
-        <span style={styles.phase}>
+        <span style={{ ...styles.phase, ...(state.paused ? { color: "#c8a830", fontWeight: 700 } : {}) }}>
           {state.paused ? "⏸ PAUSED" : phase}
-          {joinUrl && <span style={styles.urlInline}> · {joinUrl}</span>}
+          {state.gameCode && state.phase !== "lobby" && (
+            <span style={styles.codeInline}> · #{state.gameCode}</span>
+          )}
         </span>
         {state.phase === "lobby" ? (
           <button style={styles.startBtn} onClick={startGame}>
@@ -84,8 +84,16 @@ export default function HostScreen() {
           </>
         ) : (
           <>
-            <button style={styles.pauseBtn} onClick={togglePause}>
-              {state.paused ? "Resume" : "Pause"}
+            <button
+              style={{
+                ...styles.pauseBtn,
+                ...(state.paused
+                  ? { background: "#c8a830", border: "2px solid #c8a830", color: "#ffffff", fontWeight: 700 }
+                  : {}),
+              }}
+              onClick={togglePause}
+            >
+              {state.paused ? "▶ Resume" : "⏸ Pause"}
             </button>
             <button style={styles.endBtn} onClick={endGame}>End Game</button>
           </>
@@ -131,40 +139,51 @@ export default function HostScreen() {
         </div>
       </div>
 
-      {/* ── Player list — full table in lobby only, count shown in-game via MiniStat */}
+      {/* ── Lobby: QR join panel + player list ───────────────────────────── */}
       {state.phase === "lobby" && (
-        <div style={styles.card}>
-          <h2 style={styles.cardTitle}>Players ({state.knownPlayers.length})</h2>
-          {state.knownPlayers.length === 0 ? (
-            <p style={styles.empty}>No players yet — share the join URL.</p>
-          ) : (
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>#</th>
-                  <th style={styles.th}>Name</th>
-                  <th style={styles.th}>Role</th>
-                  <th style={styles.th}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {state.knownPlayers.map((p, i) => (
-                  <tr key={p.id}>
-                    <td style={styles.td}>{i + 1}</td>
-                    <td style={styles.td}>{p.name}</td>
-                    <td style={{ ...styles.td, color: p.role === "farmer" ? "#1d6b1d" : "#0d5858" }}>
-                      {p.role}
-                    </td>
-                    <td style={styles.td}>
-                      <button style={styles.kickBtn} onClick={() => kickPlayer(p.id)}>
-                        Kick
-                      </button>
-                    </td>
+        <div style={styles.lobbyRow}>
+          {/* QR + code */}
+          <div style={styles.joinPanel}>
+            <img src="/qr-code.png" alt="Scan to join" style={styles.qrImg} />
+            <p style={styles.joinLabel}>Scan to join</p>
+            <div style={styles.joinCode}>{state.gameCode ?? "—"}</div>
+            <p style={styles.joinSub}>Enter this code on the join page</p>
+          </div>
+
+          {/* Player waiting list */}
+          <div style={{ ...styles.card, flex: 1, minWidth: 0 }}>
+            <h2 style={styles.cardTitle}>Players ({state.knownPlayers.length})</h2>
+            {state.knownPlayers.length === 0 ? (
+              <p style={styles.empty}>No one yet — waiting for players to scan…</p>
+            ) : (
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>#</th>
+                    <th style={styles.th}>Name</th>
+                    <th style={styles.th}>Role</th>
+                    <th style={styles.th}></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </thead>
+                <tbody>
+                  {state.knownPlayers.map((p, i) => (
+                    <tr key={p.id}>
+                      <td style={styles.td}>{i + 1}</td>
+                      <td style={styles.td}>{p.name}</td>
+                      <td style={{ ...styles.td, color: p.role === "farmer" ? "#1d6b1d" : "#0d5858" }}>
+                        {p.role}
+                      </td>
+                      <td style={styles.td}>
+                        <button style={styles.kickBtn} onClick={() => kickPlayer(p.id)}>
+                          Kick
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
 
@@ -268,9 +287,9 @@ const styles = {
     flexDirection: "column" as const,
     alignItems: "stretch",
     gap: "1.25rem",
-    padding: "1rem",
-    maxWidth: 1100,
-    margin: "0 auto",
+    padding: "1rem 0",
+    maxWidth: "100%",
+    margin: "0",
     width: "100%",
     minHeight: "100vh",
     background: "#f5f3ef",
@@ -294,6 +313,7 @@ const styles = {
     textTransform: "uppercase" as const,
   },
   phase: { color: "#5a5a54", fontSize: "1.15rem", fontWeight: 500, flex: 1, minWidth: 0 },
+  codeInline: { fontFamily: "monospace", color: "#1d6b1d", fontWeight: 700 },
   startBtn: {
     background: "#1d6b1d",
     border: "none",
@@ -328,10 +348,51 @@ const styles = {
     cursor: "pointer",
     flexShrink: 0,
   },
-  urlInline: {
-    fontFamily: "monospace",
+  lobbyRow: {
+    display: "flex",
+    gap: "1.5rem",
+    alignItems: "flex-start",
+    flexWrap: "wrap" as const,
+  },
+  joinPanel: {
+    background: "#ffffff",
+    border: "1px solid #e2ddd6",
+    borderRadius: 10,
+    padding: "1.5rem",
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    gap: "0.6rem",
+    flexShrink: 0,
+    width: "clamp(200px, 18vw, 300px)",
+  },
+  qrImg: {
+    width: "100%",
+    height: "auto",
+    borderRadius: 6,
+    display: "block",
+  },
+  joinLabel: {
+    margin: 0,
+    fontSize: "0.75rem",
+    color: "#9a9a90",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.1em",
+    fontWeight: 700,
+  },
+  joinCode: {
+    fontSize: "clamp(2rem, 4vw, 4rem)",
+    fontWeight: "800" as const,
+    letterSpacing: "0.2em",
     color: "#1d6b1d",
-    fontWeight: 600,
+    fontFamily: "monospace",
+    lineHeight: 1,
+  },
+  joinSub: {
+    margin: 0,
+    fontSize: "0.75rem",
+    color: "#9a9a90",
+    textAlign: "center" as const,
   },
   priceCard: {
     background: "#ffffff",
@@ -348,11 +409,11 @@ const styles = {
     marginBottom: "1.5rem",
   },
   priceLabel: { margin: 0, color: "#8a8a80", fontSize: "1rem", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase" as const },
-  priceValue: { margin: "0.2rem 0 0", fontSize: "6rem", fontWeight: "800" as const, color: "#1d6b1d", lineHeight: 1 },
+  priceValue: { margin: "0.2rem 0 0", fontSize: "clamp(4rem, 6vw, 8rem)", fontWeight: "800" as const, color: "#1d6b1d", lineHeight: 1 },
   countdown: { margin: "0.6rem 0 0", color: "#5a5a54", fontSize: "1.2rem", fontWeight: 600 },
   chartBox: {
     width: "100%",
-    height: 340,
+    height: "clamp(260px, 22vw, 480px)",
     borderRadius: 6,
     overflow: "hidden",
   },

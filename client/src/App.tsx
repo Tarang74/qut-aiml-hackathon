@@ -142,7 +142,7 @@ export default function App() {
       <GameDispatchContext.Provider value={dispatch}>
         <WsSendContext.Provider value={send}>
           <NavigateContext.Provider value={navigate}>
-            <NewsTicker />
+            {state.isHost && <NewsTicker />}
             <EventBanner />
             <EmojiConfetti />
             {screen}

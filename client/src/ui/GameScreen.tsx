@@ -9,8 +9,8 @@
  */
 import { useEffect, useState } from "react";
 import { useGameDispatch, useGameState, useWsSend } from "../state/store";
+import { useNavigate } from "../router";
 import type { PlayerAction } from "../ws/protocol";
-import { TICKER_HEIGHT } from "./NewsTicker";
 
 type Tab = "farm" | "market" | "options" | "chaos" | "god";
 
@@ -18,6 +18,7 @@ export default function GameScreen() {
   const state = useGameState();
   const send = useWsSend();
   const dispatch = useGameDispatch();
+  const navigate = useNavigate();
   const isFarmer = state.myRole === "farmer";
 
   const [tab, setTab] = useState<Tab>(isFarmer ? "farm" : "market");
@@ -32,6 +33,11 @@ export default function GameScreen() {
   function closeHelp() {
     sessionStorage.setItem("aura_help_seen", "1");
     setShowHelp(false);
+  }
+
+  function leaveGame() {
+    dispatch({ type: "leave_game" });
+    navigate("/join");
   }
 
   useEffect(() => {
@@ -101,7 +107,7 @@ export default function GameScreen() {
         </div>
         <div style={{ textAlign: "right" as const, minWidth: 80, flexShrink: 0 }}>
           {state.paused ? (
-            <span style={{ ...s.phasePill, background: "#eeeeea", color: "#7a7a70" }}>⏸ Paused</span>
+            <span style={{ ...s.phasePill, background: "#c8a830", color: "#ffffff", fontWeight: "800" as const }}>⏸ Paused</span>
           ) : isDecision ? (
             <span style={{ ...s.phasePill, background: "#e8f5e8", color: "#1d6b1d" }}>
               {countdown}s
@@ -111,27 +117,46 @@ export default function GameScreen() {
               Resolving…
             </span>
           )}
-          <div style={s.cycleLabel}>Cycle {state.cycle}</div>
         </div>
         <button style={s.helpBtn} onClick={() => setShowHelp(true)}>?</button>
+        <button style={s.leaveBtn} onClick={leaveGame} title="Leave game">✕</button>
       </div>
 
       {/* ── Queued action banner + countdown ─────────────────────────────── */}
       <div style={{
         ...s.countdownBar,
-        ...(isDecision && !locked && pending
+        ...(state.paused
+          ? { background: "#fdf6e3", borderColor: "#c8a830", flexDirection: "row" as const, justifyContent: "center", gap: "0.6rem" }
+          : isDecision && !locked && pending
           ? { background: "#fffbe8", borderColor: "#d4aa20", flexDirection: "row" as const, justifyContent: "space-between", padding: "0.45rem 0.875rem" }
+          : locked && isDecision ? { background: "#e0f5e0", borderColor: "#9ac89a" }
+          : !isDecision ? { background: "#f8f4e0", borderColor: "#c8b060" }
           : {}),
-        ...(locked && isDecision ? { background: "#e0f5e0", borderColor: "#9ac89a" } : {}),
-        ...(!isDecision ? { background: "#f8f4e0", borderColor: "#c8b060" } : {}),
       }}>
-        {isDecision && !locked && !pending && (
+        {/* ── Paused banner (takes priority over all other states) ─────── */}
+        {state.paused && (
+          <>
+            <span style={{ fontSize: "1.3rem", lineHeight: 1 }}>⏸</span>
+            <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "center" }}>
+              <span style={{ fontSize: "0.95rem", fontWeight: "800" as const, color: "#7a5010", letterSpacing: "0.08em", textTransform: "uppercase" as const }}>
+                Game Paused
+              </span>
+              {isDecision && (
+                <span style={{ fontSize: "0.65rem", color: "#9a7838", letterSpacing: "0.05em", marginTop: "0.1rem" }}>
+                  {countdown}s on the clock — timer frozen
+                </span>
+              )}
+            </div>
+          </>
+        )}
+
+        {!state.paused && isDecision && !locked && !pending && (
           <>
             <span style={s.countdownNum}>{countdown}</span>
             <span style={s.countdownLabel}>seconds to lock in</span>
           </>
         )}
-        {isDecision && !locked && pending && (
+        {!state.paused && isDecision && !locked && pending && (
           <>
             <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", minWidth: 0, overflow: "hidden" }}>
               <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>⚡</span>
@@ -146,7 +171,7 @@ export default function GameScreen() {
             </div>
           </>
         )}
-        {isDecision && locked && (
+        {!state.paused && isDecision && locked && (
           <>
             <span style={{ ...s.countdownNum, color: "#1d6b1d", fontSize: "1.3rem" }}>
               ✓ {pending ? pending.label : "No action"}
@@ -154,7 +179,7 @@ export default function GameScreen() {
             <span style={{ ...s.countdownLabel, color: "#9a9a90" }}>waiting for others…</span>
           </>
         )}
-        {!isDecision && (
+        {!state.paused && !isDecision && (
           <span style={{ ...s.countdownNum, color: "#7a5010", fontSize: "1.4rem" }}>
             Resolving cycle {state.cycle}…
           </span>
@@ -263,7 +288,7 @@ export default function GameScreen() {
 const TAB_TIPS: Record<string, { icon: string; text: string }> = {
   farm:    { icon: "🌽", text: "Each cycle: Plant → Harvest → Sell. Hire workers to boost yield. Lock in before time runs out!" },
   market:  { icon: "📈", text: "Buy low, sell high. Negative shares = short position. Watch Bid/Ask depth to sense price direction." },
-  options: { icon: "📊", text: "Calls pay off if price rises; Puts if it falls. Writing options earns premium now but risks loss later." },
+  options: { icon: "📊", text: "Buy a Call to profit if price rises. Buy a Put to profit if price falls. Writing an option earns cash upfront — but you owe the buyer if price moves against you." },
   chaos:   { icon: "🔥", text: "Burn rivals' farms & mills to gut their income. Aura refills +10 every cycle — spend it wisely." },
   god:     { icon: "⚡", text: "Save aura for game-changers. Nuclear Fallout ends the game immediately — coordinate for maximum impact." },
 };
@@ -312,7 +337,7 @@ function HowToPlayModal({ role, onClose }: { role: string | null; onClose: () =>
           ) : (
             <div style={s.modalSection}>
               <p style={s.modalSectionTitle}>📈 You are a Trader</p>
-              <p style={s.modalText}>Buy and sell CornCo stock. Go long when supply looks tight, short when there's a glut. Write options to collect premium. Corner the market or dump shares to move the price.</p>
+              <p style={s.modalText}>Buy and sell CornCo stock. Go long when supply looks tight, short when there's a glut. Sell options to collect premium. Corner the market or dump shares to move the price.</p>
             </div>
           )}
           <div style={s.modalSection}>
@@ -478,7 +503,7 @@ function OptionsTab({
   const price = parseFloat(state.price);
   const [strikeOffset, setStrikeOffset] = useState(0);
   const strike = (price * (1 + strikeOffset / 100)).toFixed(2);
-  const strikeLabels: Record<number, string> = { [-10]: "-10%", 0: "ATM", 10: "+10%" };
+  const strikeLabels: Record<number, string> = { [-10]: "−10% below", 0: "At price", 10: "+10% above" };
 
   function optStyle(baseStyle: object, actLabel: string) {
     const isSelected = pendingLabel === actLabel;
@@ -499,11 +524,11 @@ function OptionsTab({
       <div style={s.card}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.6rem" }}>
           <div>
-            <div style={s.statLabel}>Spot price</div>
+            <div style={s.statLabel}>Current price</div>
             <div style={{ ...s.statValue, fontSize: "1.4rem", fontWeight: "800" as const, color: "#1d6b1d" }}>${price.toFixed(2)}</div>
           </div>
           <div style={{ textAlign: "right" as const }}>
-            <div style={s.statLabel}>Strike · expiry</div>
+            <div style={s.statLabel}>Strike price · expires in</div>
             <div style={{ ...s.statValue, color: "#6b6b63" }}>${strike} · {OPT_EXPIRY} cycles</div>
           </div>
         </div>
@@ -518,7 +543,7 @@ function OptionsTab({
       </div>
 
       <div style={s.card}>
-        <p style={s.cardTitle}>Buy an option (pay a premium upfront)</p>
+        <p style={s.cardTitle}>Buy an option — pay a small premium now, profit if you're right</p>
         <div style={s.btnGrid}>
           {(["call", "put"] as const).map((type) => {
             const actLabel = type === "call" ? `Buy Call @ $${strike}` : `Buy Put @ $${strike}`;
@@ -533,8 +558,8 @@ function OptionsTab({
                 <span style={{ ...s.optLabel, color: isSelected ? "#155215" : "#18181a" }}>
                   {isSelected ? `${type === "call" ? "Buy Call" : "Buy Put"}` : type === "call" ? "Buy Call" : "Buy Put"}
                 </span>
-                <span style={s.optDesc}>{type === "call" ? "profit if price rises" : "profit if price falls"}</span>
-                <span style={s.optMeta}>strike ${strike}</span>
+                <span style={s.optDesc}>{type === "call" ? "you win if price goes up" : "you win if price goes down"}</span>
+                <span style={s.optMeta}>trigger at ${strike}</span>
               </button>
             );
           })}
@@ -542,10 +567,10 @@ function OptionsTab({
       </div>
 
       <div style={s.card}>
-        <p style={s.cardTitle}>Write an option (collect premium, take on risk)</p>
+        <p style={s.cardTitle}>Sell an option (collect premium, take on risk)</p>
         <div style={s.btnGrid}>
           {(["call", "put"] as const).map((type) => {
-            const actLabel = type === "call" ? `Write Call @ $${strike}` : `Write Put @ $${strike}`;
+            const actLabel = type === "call" ? `Sell Call @ $${strike}` : `Sell Put @ $${strike}`;
             const isSelected = pendingLabel === actLabel;
             return (
               <button key={type}
@@ -557,8 +582,8 @@ function OptionsTab({
                 <span style={{ ...s.optLabel, color: isSelected ? "#155215" : "#18181a" }}>
                   {type === "call" ? "Write Call" : "Write Put"}
                 </span>
-                <span style={s.optDesc}>{type === "call" ? "risky if price surges" : "risky if price crashes"}</span>
-                <span style={s.optMeta}>strike ${strike}</span>
+                <span style={s.optDesc}>{type === "call" ? "you pay out if price surges" : "you pay out if price crashes"}</span>
+                <span style={s.optMeta}>trigger at ${strike}</span>
               </button>
             );
           })}
@@ -617,7 +642,7 @@ function ChaosTab({
 
       {/* Burn Farm */}
       <div style={s.card}>
-        <p style={s.cardTitle}>Burn Farm — 20 aura</p>
+        <p style={s.cardTitle}>🔥 Burn Farm — 20 aura</p>
         <div style={s.targetRow}>
           <select style={s.select} value={targetFarm ?? ""} onChange={(e) => setTargetFarm(Number(e.target.value))}>
             {otherFarms.length === 0 && <option value="">No targets</option>}
@@ -625,7 +650,7 @@ function ChaosTab({
               <option key={f.id} value={f.id}>Farm #{f.id} ({f.state}, {f.fields} fields)</option>
             ))}
           </select>
-          <ActionBtn label="Burn" sub={aura >= 20 ? "🔥" : "need 20 aura"}
+          <ActionBtn label="🔥 Burn" sub={aura >= 20 ? "lights it up" : "need 20 aura"}
             disabled={!canAct || aura < 20 || targetFarm === null || otherFarms.length === 0}
             color="#f5e8e8" borderColor="#aa5a5a"
             selected={pendingLabel === `Burn Farm #${targetFarm}`}
@@ -635,7 +660,7 @@ function ChaosTab({
 
       {/* Burn Mill */}
       <div style={s.card}>
-        <p style={s.cardTitle}>Burn Mill — 25 aura</p>
+        <p style={s.cardTitle}>🏭🔥 Burn Mill — 25 aura</p>
         <div style={s.targetRow}>
           <select style={s.select} value={targetMill ?? ""} onChange={(e) => setTargetMill(Number(e.target.value))}>
             {aliveMills.length === 0 && <option value="">No mills</option>}
@@ -643,7 +668,7 @@ function ChaosTab({
               <option key={m.id} value={m.id}>Mill #{m.id} ({m.state})</option>
             ))}
           </select>
-          <ActionBtn label="Burn" sub={aura >= 25 ? "🔥" : "need 25 aura"}
+          <ActionBtn label="🏭🔥 Burn" sub={aura >= 25 ? "shuts it down" : "need 25 aura"}
             disabled={!canAct || aura < 25 || targetMill === null || aliveMills.length === 0}
             color="#f5e8e8" borderColor="#aa5a5a"
             selected={pendingLabel === `Burn Mill #${targetMill}`}
@@ -653,7 +678,7 @@ function ChaosTab({
 
       {/* Hitman Worker */}
       <div style={s.card}>
-        <p style={s.cardTitle}>Hitman Worker — 15 aura</p>
+        <p style={s.cardTitle}>🔪 Hitman Worker — 15 aura</p>
         <div style={s.targetRow}>
           <select style={s.select} value={hitmanFarm ?? ""} onChange={(e) => setHitmanFarm(Number(e.target.value))}>
             {aliveFarms.length === 0 && <option value="">No targets</option>}
@@ -661,7 +686,7 @@ function ChaosTab({
               <option key={f.id} value={f.id}>Farm #{f.id} ({f.workers} workers)</option>
             ))}
           </select>
-          <ActionBtn label="Send" sub={aura >= 15 ? "👤" : "need 15 aura"}
+          <ActionBtn label="🔪 Send" sub={aura >= 15 ? "one less worker" : "need 15 aura"}
             disabled={!canAct || aura < 15 || hitmanFarm === null}
             color="#f0e8f5" borderColor="#9a5aaa"
             selected={pendingLabel === `Hitman Worker on Farm #${hitmanFarm}`}
@@ -671,7 +696,7 @@ function ChaosTab({
 
       {/* Hitman Owner */}
       <div style={s.card}>
-        <p style={s.cardTitle}>Hitman NPC Owner — 50 aura</p>
+        <p style={s.cardTitle}>☠️ Hitman NPC Owner — 50 aura</p>
         <div style={s.targetRow}>
           <select style={s.select} value={targetNpc ?? ""} onChange={(e) => setTargetNpc(Number(e.target.value))}>
             {aliveNpcs.length === 0 && <option value="">No targets</option>}
@@ -679,7 +704,7 @@ function ChaosTab({
               <option key={n.id} value={n.id}>{n.name}</option>
             ))}
           </select>
-          <ActionBtn label="Send" sub={aura >= 50 ? "☠️" : "need 50 aura"}
+          <ActionBtn label="☠️ Send" sub={aura >= 50 ? "permanently removed" : "need 50 aura"}
             disabled={!canAct || aura < 50 || targetNpc === null || aliveNpcs.length === 0}
             color="#f0e8f5" borderColor="#9a5aaa"
             selected={pendingLabel?.startsWith("Hitman on ") ?? false}
@@ -689,7 +714,7 @@ function ChaosTab({
 
       {/* Spread Rumor */}
       <div style={s.card}>
-        <p style={s.cardTitle}>Spread Rumor — 5 aura</p>
+        <p style={s.cardTitle}>📢 Spread Rumor — 5 aura</p>
         <input
           style={{ ...s.select, marginBottom: "0.5rem" }}
           placeholder="Type your rumor…"
@@ -697,7 +722,7 @@ function ChaosTab({
           maxLength={120}
           onChange={(e) => setRumor(e.target.value)}
         />
-        <ActionBtn label="Spread" sub={aura >= 5 ? `"${rumor.slice(0, 20)}…"` : "need 5 aura"}
+        <ActionBtn label="📢 Spread" sub={aura >= 5 ? `"${rumor.slice(0, 20)}…"` : "need 5 aura"}
           disabled={!canAct || aura < 5 || rumor.trim().length === 0}
           color="#f5f2e0" borderColor="#9a8a40"
           selected={pendingLabel === "Spread Rumor"}
@@ -706,7 +731,7 @@ function ChaosTab({
 
       {/* Acquire Farm */}
       <div style={s.card}>
-        <p style={s.cardTitle}>Acquire Farm — ~${farmCost.toFixed(0)}</p>
+        <p style={s.cardTitle}>🌾 Acquire Farm — ~${farmCost.toFixed(0)}</p>
         <div style={s.targetRow}>
           <select style={s.select} value={acqFarm ?? ""} onChange={(e) => setAcqFarm(Number(e.target.value))}>
             {otherFarms.length === 0 && <option value="">No farms available</option>}
@@ -714,7 +739,7 @@ function ChaosTab({
               <option key={f.id} value={f.id}>Farm #{f.id} ({f.fields} fields)</option>
             ))}
           </select>
-          <ActionBtn label="Buy" sub={cash >= farmCost ? `$${farmCost.toFixed(0)}` : "not enough cash"}
+          <ActionBtn label="🌾 Buy" sub={cash >= farmCost ? `$${farmCost.toFixed(0)}` : "not enough cash"}
             disabled={!canAct || cash < farmCost || acqFarm === null || otherFarms.length === 0}
             color="#e8f2f5" borderColor="#5a8aa0"
             selected={pendingLabel === `Acquire Farm #${acqFarm}`}
@@ -724,7 +749,7 @@ function ChaosTab({
 
       {/* Acquire Mill */}
       <div style={s.card}>
-        <p style={s.cardTitle}>Acquire Mill — ~${millCost.toFixed(0)}</p>
+        <p style={s.cardTitle}>🏭 Acquire Mill — ~${millCost.toFixed(0)}</p>
         <div style={s.targetRow}>
           <select style={s.select} value={acqMill ?? ""} onChange={(e) => setAcqMill(Number(e.target.value))}>
             {aliveMills.length === 0 && <option value="">No mills available</option>}
@@ -732,7 +757,7 @@ function ChaosTab({
               <option key={m.id} value={m.id}>Mill #{m.id} ({m.state})</option>
             ))}
           </select>
-          <ActionBtn label="Buy" sub={cash >= millCost ? `$${millCost.toFixed(0)}` : "not enough cash"}
+          <ActionBtn label="🏭 Buy" sub={cash >= millCost ? `$${millCost.toFixed(0)}` : "not enough cash"}
             disabled={!canAct || cash < millCost || acqMill === null || aliveMills.length === 0}
             color="#e8f2f5" borderColor="#5a8aa0"
             selected={pendingLabel === `Acquire Mill #${acqMill}`}
@@ -862,11 +887,11 @@ function ActionBtn({
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s = {
-  root: { display: "flex", flexDirection: "column" as const, minHeight: "100vh", width: "100%", maxWidth: "100%", overflow: "hidden", background: "#f5f3ef", fontFamily: "inherit", paddingTop: TICKER_HEIGHT },
+  root: { display: "flex", flexDirection: "column" as const, minHeight: "100vh", width: "100%", maxWidth: "100%", overflow: "hidden", background: "#f5f3ef", fontFamily: "inherit" },
   topBar: {
     display: "flex", alignItems: "center", justifyContent: "space-between",
-    padding: "0.6rem 0.75rem", background: "#ffffff", borderBottom: "1px solid #e2ddd6",
-    position: "sticky" as const, top: TICKER_HEIGHT, zIndex: 10, minWidth: 0, width: "100%",
+    padding: "0.6rem 1rem", background: "#ffffff", borderBottom: "1px solid #e2ddd6",
+    position: "sticky" as const, top: 0, zIndex: 10, minWidth: 0, width: "100%",
     gap: "0.5rem",
   },
   roleTag: { fontSize: "0.6rem", background: "#e8f5f5", color: "#0d5858", padding: "0.15rem 0.4rem", borderRadius: 3, letterSpacing: "0.06em", marginRight: "0.35rem", fontWeight: "600" as const, flexShrink: 0 },
@@ -883,6 +908,13 @@ const s = {
     cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
     fontFamily: "inherit", padding: 0,
   },
+  leaveBtn: {
+    flexShrink: 0, width: 26, height: 26, borderRadius: "50%",
+    background: "#fdeaea", border: "1px solid #e8b0b0",
+    color: "#c05050", fontSize: "0.75rem", fontWeight: "700" as const,
+    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+    fontFamily: "inherit", padding: 0,
+  },
   countdownBar: {
     display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center",
     padding: "0.4rem 1rem", minHeight: 54, background: "#f0f8f0", borderBottom: "1px solid #c8e4c8",
@@ -891,7 +923,7 @@ const s = {
   countdownLabel: { fontSize: "0.6rem", color: "#5a9a5a", letterSpacing: "0.08em", textTransform: "uppercase" as const, marginTop: "0.1rem", fontWeight: "600" as const },
   lockBar: {
     position: "sticky" as const, bottom: 0, display: "flex", gap: "0.5rem",
-    padding: "0.6rem 0.75rem", background: "#ffffff", borderTop: "1px solid #e2ddd6", zIndex: 10,
+    padding: "0.6rem 1rem", background: "#ffffff", borderTop: "1px solid #e2ddd6", zIndex: 10,
   },
   lockBtn: {
     flex: 1, padding: "0.8rem 0.5rem", minHeight: 48, border: "1.5px solid", borderRadius: 8,
@@ -902,6 +934,7 @@ const s = {
   lockInBtn: { background: "#e8f5e8", borderColor: "#4a9a4a" },
   tabBar: {
     display: "flex", background: "#ffffff", borderBottom: "1px solid #e2ddd6", width: "100%",
+    paddingLeft: "0.75rem", paddingRight: "0.75rem",
   },
   tabBtn: {
     flex: 1, padding: "0.6rem 0.2rem", minHeight: 40, background: "transparent",
@@ -911,7 +944,7 @@ const s = {
     whiteSpace: "nowrap" as const, minWidth: 0, fontWeight: "600" as const,
   },
   tabBtnActive: { color: "#1d6b1d", borderBottomColor: "#1d6b1d" },
-  content: { display: "flex", flexDirection: "column" as const, gap: "0.5rem", padding: "0.5rem", flex: 1, minWidth: 0, width: "100%" },
+  content: { display: "flex", flexDirection: "column" as const, gap: "0.5rem", padding: "0.5rem 1rem", flex: 1, minWidth: 0, width: "100%" },
   card: { background: "#ffffff", border: "1px solid #e2ddd6", borderRadius: 10, padding: "0.75rem 0.875rem", minWidth: 0 },
   cardTitle: { margin: "0 0 0.5rem", fontSize: "0.65rem", color: "#9a9a90", textTransform: "uppercase" as const, letterSpacing: "0.08em", fontWeight: "700" as const },
   statGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem 0.75rem" },

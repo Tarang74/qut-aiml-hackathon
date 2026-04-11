@@ -11,19 +11,14 @@ import { useGameDispatch, useGameState } from "../state/store";
 
 interface LocalState {
   code: string | null;
-  copied: boolean;
 }
 
-type LocalAction =
-  | { type: "generate_with_code"; code: string }
-  | { type: "set_copied"; value: boolean };
+type LocalAction = { type: "generate_with_code"; code: string };
 
-function localReducer(state: LocalState, action: LocalAction): LocalState {
+function localReducer(_state: LocalState, action: LocalAction): LocalState {
   switch (action.type) {
     case "generate_with_code":
-      return { ...state, code: action.code, copied: false };
-    case "set_copied":
-      return { ...state, copied: action.value };
+      return { code: action.code };
   }
 }
 
@@ -31,18 +26,7 @@ export default function CreateScreen() {
   const navigate = useNavigate();
   const gameDispatch = useGameDispatch();
   const { gameCode, knownPlayers } = useGameState();
-  const [local, dispatch] = useReducer(localReducer, { code: gameCode, copied: false });
-
-  const joinUrl = local.code
-    ? `${window.location.origin}/${local.code}`
-    : null;
-
-  async function handleCopy() {
-    if (!joinUrl) return;
-    await navigator.clipboard.writeText(joinUrl);
-    dispatch({ type: "set_copied", value: true });
-    setTimeout(() => dispatch({ type: "set_copied", value: false }), 2000);
-  }
+  const [local, dispatch] = useReducer(localReducer, { code: gameCode });
 
   return (
     <div style={styles.root}>
@@ -61,14 +45,9 @@ export default function CreateScreen() {
         </button>
       ) : (
         <div style={styles.codeBlock}>
+          <img src="/qr-code.png" alt="Scan to join" style={styles.qrImg} />
           <div style={styles.code}>{local.code}</div>
-
-          <div style={styles.urlRow}>
-            <span style={styles.url}>{joinUrl}</span>
-            <button style={styles.copyBtn} onClick={handleCopy}>
-              {local.copied ? "✓ Copied" : "Copy"}
-            </button>
-          </div>
+          <p style={styles.hint}>Enter this code on the join page</p>
 
           {/* ── Waiting players ──────────────────────────────────────────── */}
           <div style={styles.roster}>
@@ -167,35 +146,12 @@ const styles = {
     letterSpacing: "0.25em",
     color: "#1d6b1d",
   },
-  hint: { color: "#8a8a80", fontSize: "0.8rem", margin: 0 },
-  urlRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.5rem",
-    background: "#f5f3ef",
-    border: "1px solid #ddd9d2",
-    borderRadius: 4,
-    padding: "0.4rem 0.75rem",
-    width: "100%",
-  },
-  url: {
-    flex: 1,
-    fontSize: "0.85rem",
-    color: "#5a5a54",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap" as const,
-  },
-  copyBtn: {
-    background: "transparent",
-    border: "1px solid #c8c4be",
-    color: "#5a5a54",
-    padding: "0.2rem 0.6rem",
-    borderRadius: 3,
-    fontFamily: "inherit",
-    fontSize: "0.8rem",
-    cursor: "pointer",
-    flexShrink: 0,
+  hint: { color: "#8a8a80", fontSize: "0.8rem", margin: 0, textAlign: "center" as const },
+  qrImg: {
+    width: "clamp(140px, 16vw, 220px)",
+    height: "auto",
+    borderRadius: 6,
+    display: "block",
   },
   roster: {
     alignSelf: "stretch" as const,

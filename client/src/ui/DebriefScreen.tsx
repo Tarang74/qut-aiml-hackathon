@@ -228,9 +228,9 @@ function fmt(decimal: string): string {
 
 const s = {
   root: {
-    maxWidth: 900,
+    maxWidth: "min(1400px, 96vw)",
     margin: "0 auto",
-    padding: "2.5rem 1.5rem 4rem",
+    padding: "2.5rem 2rem 4rem",
     display: "flex",
     flexDirection: "column" as const,
     gap: "1.5rem",
@@ -332,6 +332,7 @@ const s = {
     gridTemplateColumns: "repeat(6, 1fr)",
     gap: "0.75rem",
   },
+  // (responsive override applied inline where needed)
   statCell: {
     background: "#ffffff",
     border: "1px solid #e2ddd6",
@@ -353,7 +354,7 @@ const s = {
     borderRadius: 10,
     padding: "1.25rem",
   },
-  chartBox: { height: 260, borderRadius: 6, overflow: "hidden", marginTop: "0.75rem" },
+  chartBox: { height: "clamp(220px, 18vw, 400px)", borderRadius: 6, overflow: "hidden", marginTop: "0.75rem" },
 
   // Generic card
   card: {

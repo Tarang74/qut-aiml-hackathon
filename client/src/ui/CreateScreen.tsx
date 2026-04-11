@@ -38,6 +38,11 @@ export default function CreateScreen() {
           style={styles.btn}
           onClick={() => {
             const code = String(Math.floor(1000 + Math.random() * 9000));
+            fetch("/api/game/code", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ game_code: code }),
+            }).catch(() => {});
             gameDispatch({ type: "set_game_code", code });
             dispatch({ type: "generate_with_code", code });
           }}
@@ -98,6 +103,11 @@ export default function CreateScreen() {
               style={{ ...styles.btn, background: "#f5f3ef", color: "#6b6b63", border: "1.5px solid #e2ddd6" }}
               onClick={() => {
                 const code = String(Math.floor(1000 + Math.random() * 9000));
+                fetch("/api/game/code", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ game_code: code }),
+                }).catch(() => {});
                 gameDispatch({ type: "set_game_code", code });
                 dispatch({ type: "generate_with_code", code });
               }}

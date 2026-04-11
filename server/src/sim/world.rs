@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use rand::rngs::StdRng;
+use rand::RngExt;
 use rand::SeedableRng;
 use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
 use rust_decimal::Decimal;
@@ -88,6 +89,9 @@ pub struct World {
     // World modifiers
     pub drought_cycles: u32,
     pub famine_active: bool,
+    /// Price multiplier injected by SpreadRumor; biases MM quotes for TTL cycles.
+    pub rumour_shift: f64,
+    pub rumour_shift_ttl: u32,
 
     // MM blowup tracking
     pub mm_blowups: u32,
@@ -134,6 +138,8 @@ impl World {
             action_queue: HashMap::new(),
             drought_cycles: 0,
             famine_active: false,
+            rumour_shift: 1.0,
+            rumour_shift_ttl: 0,
             mm_blowups: 0,
             game_over: false,
             game_over_reason: None,
@@ -252,7 +258,6 @@ impl World {
 
         self.event_log
             .push(self.cycle, GameEvent::CycleStart { cycle: self.cycle });
-        events.push(GameEvent::CycleStart { cycle: self.cycle });
 
         // 1. Snapshot MM NAV, then let agents quote first so players can trade against fresh liquidity.
         let price = self.price;
@@ -308,6 +313,9 @@ impl World {
         }
         if self.famine_active && self.cycle.is_multiple_of(3) {
             self.famine_active = false;
+        }
+        if self.rumour_shift_ttl > 0 {
+            self.rumour_shift_ttl -= 1;
         }
 
         // 8. Tick farm burn timers.
@@ -741,7 +749,19 @@ impl World {
                         have: player.aura,
                     });
                 }
-                self.players.get_mut(&pid).unwrap().aura -= aura::COST_RUMOR;
+                // Random directional shock: 8–18% move, bullish or bearish.
+                // Uses the seeded RNG so replays are deterministic.
+                let magnitude = 0.08 + self.rng.random::<f64>() * 0.10;
+                self.rumour_shift = if self.rng.random::<bool>() {
+                    1.0 + magnitude
+                } else {
+                    1.0 - magnitude
+                };
+                // TTL=2: decremented at end of this cycle → active for exactly 1 full cycle.
+                self.rumour_shift_ttl = 2;
+                let p = self.players.get_mut(&pid).unwrap();
+                p.aura -= aura::COST_RUMOR;
+                p.aura += aura::AURA_CHAOS_BONUS;
                 events.push(GameEvent::Rumor { text });
             }
 
@@ -997,7 +1017,12 @@ impl World {
     }
 
     fn world_view(&self) -> WorldView {
-        WorldView { price: self.price }
+        let effective_price = if self.rumour_shift_ttl > 0 {
+            self.price * self.rumour_shift
+        } else {
+            self.price
+        };
+        WorldView { price: effective_price }
     }
 
     fn run_npc_farm_autopilot(&mut self) -> Vec<crate::agents::PendingOrder> {

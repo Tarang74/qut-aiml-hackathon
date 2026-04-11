@@ -29,8 +29,8 @@ function draw(canvas: HTMLCanvasElement, prices: number[]) {
 
   const cssW = W / dpr;
   const cssH = H / dpr;
-  const cW = cssW - PAD.left - PAD.right;   // chart inner width
-  const cH = cssH - PAD.top - PAD.bottom;   // chart inner height
+  const cW = cssW - PAD.left - PAD.right; // chart inner width
+  const cH = cssH - PAD.top - PAD.bottom; // chart inner height
 
   // ── Clear ──────────────────────────────────────────────────────────────────
   ctx.clearRect(0, 0, cssW, cssH);
@@ -133,14 +133,23 @@ function draw(canvas: HTMLCanvasElement, prices: number[]) {
   // ── X-axis labels ──────────────────────────────────────────────────────────
   // Only show 3–4 ticks so they can't crowd together.
   const n = prices.length;
-  const xTicks: Array<{ idx: number; label: string; align: CanvasTextAlign }> = [
-    { idx: 0,                        label: "start",         align: "left"   as CanvasTextAlign },
-    { idx: Math.round(n * 0.33),     label: `${Math.round(n * 0.33)}`,  align: "center" as CanvasTextAlign },
-    { idx: Math.round(n * 0.67),     label: `${Math.round(n * 0.67)}`,  align: "center" as CanvasTextAlign },
-    { idx: n - 1,                    label: "now",           align: "right"  as CanvasTextAlign },
-  ]
-    // Deduplicate adjacent same-index ticks when history is very short.
-    .filter((t, i, arr) => i === 0 || t.idx !== arr[i - 1].idx);
+  const xTicks: Array<{ idx: number; label: string; align: CanvasTextAlign }> =
+    [
+      { idx: 0, label: "start", align: "left" as CanvasTextAlign },
+      {
+        idx: Math.round(n * 0.33),
+        label: `${Math.round(n * 0.33)}`,
+        align: "center" as CanvasTextAlign,
+      },
+      {
+        idx: Math.round(n * 0.67),
+        label: `${Math.round(n * 0.67)}`,
+        align: "center" as CanvasTextAlign,
+      },
+      { idx: n - 1, label: "now", align: "right" as CanvasTextAlign },
+    ]
+      // Deduplicate adjacent same-index ticks when history is very short.
+      .filter((t, i, arr) => i === 0 || t.idx !== arr[i - 1].idx);
 
   ctx.font = `500 12px 'DM Sans', system-ui, sans-serif`;
   ctx.textBaseline = "bottom";
@@ -177,7 +186,9 @@ export default function PriceChart({ history }: Props) {
       resize();
       // Re-read prices from the ref after resize.
       const latestPrices = Array.from(
-        canvas!.dataset.prices ? JSON.parse(canvas!.dataset.prices) as number[] : []
+        canvas!.dataset.prices
+          ? (JSON.parse(canvas!.dataset.prices) as number[])
+          : [],
       );
       draw(canvas!, latestPrices);
     });
@@ -194,7 +205,7 @@ export default function PriceChart({ history }: Props) {
     // Stash prices on the element so the ResizeObserver can redraw with latest data.
     canvas.dataset.prices = JSON.stringify(prices);
     draw(canvas, prices);
-  }, [history]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [history]);
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>

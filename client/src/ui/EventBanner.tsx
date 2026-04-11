@@ -142,12 +142,14 @@ const SEVERITY_STYLES: Record<Severity, { bg: string; border: string; icon: stri
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function EventBanner() {
-  const { cycleEvents } = useGameState();
+  const { cycleEvents, phase } = useGameState();
   const [banners, setBanners] = useState<Banner[]>([]);
   const prevEventsRef = useRef<GameEvent[]>([]);
 
   // Detect new cycle_events batch and queue banners.
   useEffect(() => {
+    // Don't spawn banners on the debrief screen — same snapshot-replay issue as confetti.
+    if (phase === "game_over") return;
     if (cycleEvents === prevEventsRef.current || cycleEvents.length === 0) return;
     prevEventsRef.current = cycleEvents;
 
@@ -168,7 +170,7 @@ export default function EventBanner() {
         }, b.durationMs);
       }, i * 400);
     });
-  }, [cycleEvents]);
+  }, [cycleEvents, phase]);
 
   // Cap visible banners at 4 (oldest drop off).
   const visible = banners.slice(-4);

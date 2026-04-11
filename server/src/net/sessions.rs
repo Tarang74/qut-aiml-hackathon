@@ -49,6 +49,12 @@ impl SessionStore {
         self.0.remove(&id);
     }
 
+    /// Drop all Player sessions. Called on game reset/end so stale cookies
+    /// don't auto-rejoin players into the next game.
+    pub fn clear_players(&self) {
+        self.0.retain(|_, v| !matches!(v, SessionData::Player { .. }));
+    }
+
     /// Parse a raw Cookie header value and return the aura_session UUID if present.
     pub fn parse_cookie(cookie_header: &str) -> Option<Uuid> {
         for part in cookie_header.split(';') {

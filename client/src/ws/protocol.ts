@@ -139,7 +139,9 @@ export type ServerMsg =
   | { type: "player_feedback"; player_id: PlayerId; tips: string }
   | { type: "headline"; text: string; cycle: number }
   | { type: "admin_summary"; text: string; cycle: number }
+  | { type: "milestone_summary"; text: string; cycle: number }
   | { type: "debrief"; stats: DebriefStats }
+  | { type: "debrief_narrative"; text: string }
   | { type: "player_left"; player_id: PlayerId }
   | { type: "kicked"; player_id: PlayerId; reason: string }
   | { type: "game_over"; reason: string }

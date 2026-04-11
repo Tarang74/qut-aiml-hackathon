@@ -64,6 +64,19 @@ export default function SummaryScreen() {
         </div>
       )}
 
+      {/* ── Milestone recap (every 5 cycles) ────────────────────────── */}
+      {state.milestoneSummary?.cycle === state.cycle ? (
+        <div style={s.milestoneCard}>
+          <span style={s.milestoneLabel}>CHECKPOINT RECAP</span>
+          <p style={s.milestoneText}>{state.milestoneSummary.text}</p>
+        </div>
+      ) : (
+        <div style={s.milestoneCard}>
+          <span style={s.milestoneLabel}>CHECKPOINT RECAP</span>
+          <p style={s.milestoneLoading}>Generating recap…</p>
+        </div>
+      )}
+
       {/* ── Latest headline ─────────────────────────────────────────── */}
       {state.headlines.length > 0 && (
         <div style={s.headlineCard}>
@@ -159,4 +172,10 @@ const s = {
   feedbackLine: { fontSize: "0.82rem", color: "#1a4a1a", lineHeight: 1.5, margin: "0.2rem 0" },
   headlineLabel: { fontSize: "0.6rem", color: "#9a9a90", letterSpacing: "0.1em", display: "block", marginBottom: "0.3rem" },
   headlineText: { fontSize: "0.85rem", color: "#4a4a44", fontStyle: "italic" as const, margin: 0, lineHeight: 1.5 },
+  milestoneCard: {
+    background: "#fffdf5", border: "2px solid #c8b060", borderRadius: 8, padding: "0.9rem 1rem",
+  },
+  milestoneLabel: { fontSize: "0.6rem", color: "#9a7020", letterSpacing: "0.1em", fontWeight: 700 as const, display: "block", marginBottom: "0.4rem", textTransform: "uppercase" as const },
+  milestoneText: { fontSize: "0.9rem", color: "#3a3a36", margin: 0, lineHeight: 1.6 },
+  milestoneLoading: { fontSize: "0.85rem", color: "#b0a060", fontStyle: "italic" as const, margin: 0 },
 } as const;

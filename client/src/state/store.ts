@@ -67,12 +67,16 @@ export interface GameState {
 
   // Per-cycle admin summary (Sonnet, only visible to admin/host)
   adminSummary: { text: string; cycle: number } | null;
+  // Milestone (every-5-cycle) summary — broadcast to all players
+  milestoneSummary: { text: string; cycle: number } | null;
 
   // All players' net worths — populated from PlayerState broadcasts (host uses this for leaderboard)
   playerNetWorths: Record<number, { name: string; netWorth: string }>;
 
   // End-of-game structured stats (no LLM)
   debrief: DebriefStats | null;
+  // End-of-game narrative recap from LLM — arrives a few seconds after debrief
+  debriefNarrative: string | null;
 
   // UI feedback
   error: string | null;
@@ -114,8 +118,10 @@ const INITIAL_STATE: GameState = {
   headlines: [],
   myFeedback: null,
   adminSummary: null,
+  milestoneSummary: null,
   playerNetWorths: {},
   debrief: null,
+  debriefNarrative: null,
   error: null,
   gameCode: null,
   paused: false,
@@ -280,6 +286,9 @@ function reducer(state: GameState, action: GameAction): GameState {
         case "admin_summary":
           return { ...state, adminSummary: { text: msg.text, cycle: msg.cycle } };
 
+        case "milestone_summary":
+          return { ...state, milestoneSummary: { text: msg.text, cycle: msg.cycle } };
+
         case "player_roster":
           return {
             ...state,
@@ -316,6 +325,9 @@ function reducer(state: GameState, action: GameAction): GameState {
 
         case "debrief":
           return { ...state, debrief: msg.stats };
+
+        case "debrief_narrative":
+          return { ...state, debriefNarrative: msg.text };
 
         case "game_over":
           return { ...state, phase: "game_over" };

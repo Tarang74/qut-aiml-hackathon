@@ -11,6 +11,7 @@ terraform/envs.tf
 
 # Build artifacts
 server/target/
+server/static/
 client/node_modules/
 client/dist/
 

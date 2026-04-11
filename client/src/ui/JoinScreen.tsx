@@ -19,13 +19,15 @@ interface LocalState {
   error: string | null;
   showManual: boolean;
   lobby: LobbyInfo | null;
+  lobbyChecked: boolean;
 }
 
 type LocalAction =
   | { type: "set_value"; value: string }
   | { type: "set_error"; msg: string }
   | { type: "show_manual" }
-  | { type: "set_lobby"; lobby: LobbyInfo };
+  | { type: "set_lobby"; lobby: LobbyInfo }
+  | { type: "lobby_checked" };
 
 function localReducer(state: LocalState, action: LocalAction): LocalState {
   switch (action.type) {
@@ -37,6 +39,8 @@ function localReducer(state: LocalState, action: LocalAction): LocalState {
       return { ...state, showManual: true };
     case "set_lobby":
       return { ...state, lobby: action.lobby };
+    case "lobby_checked":
+      return { ...state, lobbyChecked: true };
   }
 }
 
@@ -47,6 +51,7 @@ export default function JoinScreen() {
     error: null,
     showManual: false,
     lobby: null,
+    lobbyChecked: false,
   });
 
   useEffect(() => {
@@ -56,8 +61,11 @@ export default function JoinScreen() {
         if (data.game_code && data.is_public) {
           dispatch({ type: "set_lobby", lobby: data });
         }
+        dispatch({ type: "lobby_checked" });
       })
-      .catch(() => {});
+      .catch(() => {
+        dispatch({ type: "lobby_checked" });
+      });
   }, []);
 
   const { lobby } = local;
@@ -67,6 +75,11 @@ export default function JoinScreen() {
   function handleSubmit() {
     if (local.value.length !== 4) {
       dispatch({ type: "set_error", msg: "Enter the 4-digit code from your host." });
+      return;
+    }
+    // If the lobby check has completed and the code doesn't match the active game, reject early.
+    if (local.lobbyChecked && local.lobby?.game_code !== local.value) {
+      dispatch({ type: "set_error", msg: "No active game with that code." });
       return;
     }
     navigate(`/${local.value}`);

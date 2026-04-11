@@ -13,7 +13,7 @@
  *   const send  = useWsSend();     // send a ClientMsg
  * ─────────────────────────────────────────────────────────────────────────────
  */
-import { useReducer } from "react";
+import { useEffect, useReducer } from "react";
 import { useGameState, useGameDispatch, useWsSend } from "../state/store";
 import { useNavigate } from "../router";
 import type { Role } from "../ws/protocol";
@@ -25,11 +25,15 @@ interface Props {
 interface LocalState {
   name: string;
   role: Role;
+  checking: boolean;
+  notFound: boolean;
 }
 
 type LocalAction =
   | { type: "set_name"; value: string }
-  | { type: "set_role"; value: Role };
+  | { type: "set_role"; value: Role }
+  | { type: "not_found" }
+  | { type: "found" };
 
 function localReducer(state: LocalState, action: LocalAction): LocalState {
   switch (action.type) {
@@ -37,6 +41,10 @@ function localReducer(state: LocalState, action: LocalAction): LocalState {
       return { ...state, name: action.value };
     case "set_role":
       return { ...state, role: action.value };
+    case "not_found":
+      return { ...state, checking: false, notFound: true };
+    case "found":
+      return { ...state, checking: false };
   }
 }
 
@@ -49,7 +57,25 @@ export default function LobbyScreen({ code }: Props) {
   const [form, dispatch] = useReducer(localReducer, {
     name: "",
     role: "trader",
+    checking: true,
+    notFound: false,
   });
+
+  useEffect(() => {
+    fetch("/api/lobby")
+      .then((r) => r.json())
+      .then((data: { game_code: string | null }) => {
+        if (data.game_code === code) {
+          dispatch({ type: "found" });
+        } else {
+          dispatch({ type: "not_found" });
+        }
+      })
+      .catch(() => {
+        // Network error — don't block, let the WS connection surface the truth.
+        dispatch({ type: "found" });
+      });
+  }, [code]);
 
   function handleJoin() {
     const name = form.name.trim();
@@ -60,6 +86,30 @@ export default function LobbyScreen({ code }: Props) {
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
+  if (form.checking) {
+    return (
+      <div style={styles.root}>
+        <h1 style={styles.title}>🌽 Aura Farmers</h1>
+        <p style={styles.notice}>Looking up game…</p>
+      </div>
+    );
+  }
+
+  if (form.notFound) {
+    return (
+      <div style={styles.root}>
+        <h1 style={styles.title}>🌽 Aura Farmers</h1>
+        <p style={{ ...styles.notice, color: "#b94040", fontSize: "1rem" }}>
+          No game found with code <strong>{code}</strong>.
+        </p>
+        <p style={styles.notice}>The game may not have started yet, or the code is wrong.</p>
+        <button style={styles.btn} onClick={() => navigate("/join")}>
+          ← Back to Join
+        </button>
+      </div>
+    );
+  }
+
   // TODO: replace with real design / Three.js lobby scene
   return (
     <div style={styles.root}>

@@ -1,27 +1,70 @@
 /**
  * DebriefScreen — shown when phase === "game_over".
  *
- * Layout:
- *  1. Header — reason + New Game button (host only)
+ * Host layout:
+ *  1. Header — reason + New Game button
  *  2. Podium — top 3 players
- *  3. My result card (players only, not host)
- *  4. Market stats strip
- *  5. Price history chart
- *  6. Full leaderboard table
- *  7. Season headlines
- *  8. Analyst summary (host only)
+ *  3. Market stats strip
+ *  4. Price history chart
+ *  5. Full leaderboard table
+ *  6. Season headlines
+ *  7. Chronicle (LLM narrative)
+ *  8. Analyst summary (last cycle)
+ *
+ * Player layout:
+ *  1. Aura comment banner (rank-based)
+ *  2. Personal result card
+ *  3. Leaderboard table
+ *  4. Chronicle (LLM narrative)
  */
-import { useGameDispatch, useGameState } from "../state/store";
+import { useGameDispatch, useGameState, useWsSend } from "../state/store";
 import { useNavigate } from "../router/index";
 import PriceChart from "./PriceChart";
 import type { PlayerSummary } from "../ws/protocol";
 
 const SS_HOST = "aura_is_host";
 
+// ── Aura comment ───────────────────────────────────────────────────────────────
+
+const AURA_TOP = [
+  "You have infinite aura ✨👑✨",
+  "Your aura has its own aura 🌹💫",
+  "Aura so strong it bends the leaderboard 💪🔥",
+];
+
+const AURA_BOTTOM = [
+  "Aura declared a biohazard ☣️💀",
+  "Aura so bad it affects others nearby 😰🥀",
+  "You are actively draining the aura economy 📉💸😭",
+  "You have negative infinity aura 🥀💀🥀",
+];
+
+const AURA_MIDDLE = [
+  "Certified aura farmer 🌾😤",
+  "Aura positive, vibes immaculate 🫶✨",
+  "Mid aura, but you tried 😐🌸",
+  "Your aura is being investigated 🔍😟",
+  "Aura in shambles 😭💀",
+  "Your aura owes people aura 😳🙏",
+];
+
+function getAuraComment(rank: number, totalPlayers: number, playerId: number): string {
+  if (totalPlayers <= 0) return "Aura status: undetermined";
+  if (rank === 1) return AURA_TOP[playerId % AURA_TOP.length];
+  if (rank === totalPlayers || totalPlayers === 1) return AURA_BOTTOM[playerId % AURA_BOTTOM.length];
+  // Interpolate for middle ranks: percentile 0 (rank 2) → 1 (rank N-1)
+  const pct = (rank - 2) / Math.max(totalPlayers - 2, 1);
+  const idx = Math.min(Math.floor(pct * AURA_MIDDLE.length), AURA_MIDDLE.length - 1);
+  return AURA_MIDDLE[idx];
+}
+
+// ── Top-level component ────────────────────────────────────────────────────────
+
 export default function DebriefScreen() {
-  const { debrief, headlines, priceHistory, myPlayerId, isHost, adminSummary } = useGameState();
+  const { debrief, headlines, priceHistory, myPlayerId, isHost, adminSummary, debriefNarrative } = useGameState();
   const dispatch = useGameDispatch();
   const navigate = useNavigate();
+  const send = useWsSend();
 
   function endHostSession() {
     sessionStorage.removeItem(SS_HOST);
@@ -29,79 +72,130 @@ export default function DebriefScreen() {
     navigate("/create");
   }
 
+  function quitGame() {
+    // Tell the server to remove this connection's session so a fresh join is clean.
+    send({ type: "leave" });
+    document.cookie = "aura_session=; Max-Age=0; Path=/";
+    sessionStorage.removeItem(SS_HOST);
+    if (isHost) {
+      dispatch({ type: "clear_host" });
+    } else {
+      dispatch({ type: "leave_game" });
+    }
+    navigate("/");
+  }
+
   if (!debrief) {
     return (
       <div style={s.root}>
         <div style={s.header}>
           <p style={s.loading}>Calculating results…</p>
-          {isHost && (
-            <button style={s.newGameBtn} onClick={endHostSession}>
-              New Game
-            </button>
-          )}
+          <div style={s.hostBtns}>
+            {isHost && (
+              <button style={s.newGameBtn} onClick={endHostSession}>New Game</button>
+            )}
+            <button style={s.quitBtn} onClick={quitGame}>Leave</button>
+          </div>
         </div>
       </div>
     );
   }
 
   const { leaderboard, final_price, price_high, price_low, price_vol_pct, mm_blowups, total_cycles, game_over_reason } = debrief;
+  const myRow = leaderboard.find((p) => p.player_id === myPlayerId) ?? null;
 
+  // ── Player view ─────────────────────────────────────────────────────────────
+  if (!isHost && myPlayerId !== null) {
+    const pnl = myRow ? parseFloat(myRow.pnl) : 0;
+    const auraComment = myRow
+      ? getAuraComment(myRow.rank, leaderboard.length, myPlayerId)
+      : "Aura status: undetermined";
+
+    return (
+      <div style={s.playerRoot}>
+
+        {/* Aura banner — full bleed, centred */}
+        <div style={{
+          ...s.auraBanner,
+          ...(myRow?.rank === 1 ? s.auraBannerTop : myRow?.rank === leaderboard.length ? s.auraBannerBottom : s.auraBannerMid),
+        }}>
+          <p style={s.auraComment}>{auraComment}</p>
+          {myRow && (
+            <p style={s.auraRank}>#{myRow.rank} of {leaderboard.length}</p>
+          )}
+        </div>
+
+        {/* Personal stats */}
+        {myRow && (
+          <div style={s.playerStatsCard}>
+            <div style={s.playerStatRow}>
+              <span style={s.playerStatLabel}>Net Worth</span>
+              <span style={s.playerStatValue}>${fmt(myRow.net_worth)}</span>
+            </div>
+            <div style={s.playerStatRow}>
+              <span style={s.playerStatLabel}>PnL</span>
+              <span style={{ ...s.playerStatValue, color: pnl >= 0 ? "#1d6b1d" : "#7a1a1a" }}>
+                {pnl >= 0 ? "+" : ""}${Math.abs(pnl).toFixed(0)}
+              </span>
+            </div>
+            <div style={s.playerStatRow}>
+              <span style={s.playerStatLabel}>Return</span>
+              <span style={{ ...s.playerStatValue, color: myRow.return_pct >= 0 ? "#1d6b1d" : "#7a1a1a" }}>
+                {myRow.return_pct >= 0 ? "+" : ""}{myRow.return_pct.toFixed(1)}%
+              </span>
+            </div>
+            <div style={s.playerStatRow}>
+              <span style={s.playerStatLabel}>Role</span>
+              <span style={{ ...s.playerStatValue, color: myRow.role === "farmer" ? "#1d6b1d" : "#0d5858" }}>
+                {myRow.role}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <button style={s.playerLeaveBtn} onClick={quitGame}>Leave Game</button>
+
+      </div>
+    );
+  }
+
+  // ── Host view ────────────────────────────────────────────────────────────────
   const winner = leaderboard[0] ?? null;
   const top3 = leaderboard.slice(0, 3);
-  const myRow = leaderboard.find((p) => p.player_id === myPlayerId) ?? null;
 
   return (
     <div style={s.root}>
 
-      {/* ── 1. Header ────────────────────────────────────────────────────────── */}
+      {/* ── 1. Header ───────────────────────────────────────────────────────── */}
       <div style={s.header}>
         <div>
           <h1 style={s.title}>Game Over</h1>
           <p style={s.reason}>{game_over_reason}</p>
         </div>
         {isHost && (
-          <button style={s.newGameBtn} onClick={endHostSession}>
-            New Game
-          </button>
+          <div style={s.hostBtns}>
+            <button style={s.newGameBtn} onClick={endHostSession}>New Game</button>
+            <button style={s.quitBtn} onClick={quitGame}>Quit</button>
+          </div>
         )}
       </div>
 
-      {/* ── 2. Podium ────────────────────────────────────────────────────────── */}
+      {/* ── 2. Podium ───────────────────────────────────────────────────────── */}
       {leaderboard.length > 0 && (
         <div style={s.podiumRow}>
-          {/* 2nd place — left */}
           {top3[1] ? (
             <PodiumCard player={top3[1]} highlight={top3[1].player_id === myPlayerId} />
           ) : <div />}
-
-          {/* 1st place — centre, taller */}
           {winner && (
             <PodiumCard player={winner} first highlight={winner.player_id === myPlayerId} />
           )}
-
-          {/* 3rd place — right */}
           {top3[2] ? (
             <PodiumCard player={top3[2]} highlight={top3[2].player_id === myPlayerId} />
           ) : <div />}
         </div>
       )}
 
-      {/* ── 3. My result (non-host players not already in podium) ─────────────── */}
-      {myRow && !isHost && myRow.rank > 3 && (
-        <div style={s.myResult}>
-          <span style={s.myRank}>#{myRow.rank}</span>
-          <div style={s.myResultBody}>
-            <span style={s.myResultName}>{myRow.name}</span>
-            <span style={s.myResultRole}>{myRow.role}</span>
-          </div>
-          <div style={s.myResultStats}>
-            <span style={s.myNetWorth}>${fmt(myRow.net_worth)}</span>
-            <ReturnBadge pct={myRow.return_pct} />
-          </div>
-        </div>
-      )}
-
-      {/* ── 4. Market stats ──────────────────────────────────────────────────── */}
+      {/* ── 3. Market stats ─────────────────────────────────────────────────── */}
       <div style={s.statsStrip}>
         <Stat label="Final Price" value={`$${final_price.toFixed(2)}`} />
         <Stat label="Season High" value={`$${price_high.toFixed(2)}`} color="#1d6b1d" />
@@ -111,7 +205,7 @@ export default function DebriefScreen() {
         <Stat label="MM Blowups"  value={String(mm_blowups)} />
       </div>
 
-      {/* ── 5. Price chart ───────────────────────────────────────────────────── */}
+      {/* ── 4. Price chart ──────────────────────────────────────────────────── */}
       {priceHistory.length >= 2 && (
         <div style={s.chartCard}>
           <p style={s.sectionLabel}>Price History</p>
@@ -121,7 +215,7 @@ export default function DebriefScreen() {
         </div>
       )}
 
-      {/* ── 6. Full leaderboard ──────────────────────────────────────────────── */}
+      {/* ── 5. Full leaderboard ─────────────────────────────────────────────── */}
       <div style={s.card}>
         <p style={s.sectionLabel}>Leaderboard</p>
         <table style={s.table}>
@@ -155,7 +249,7 @@ export default function DebriefScreen() {
         </table>
       </div>
 
-      {/* ── 7. Season headlines ──────────────────────────────────────────────── */}
+      {/* ── 6. Season headlines ─────────────────────────────────────────────── */}
       {headlines.length > 0 && (
         <div style={s.card}>
           <p style={s.sectionLabel}>Season Headlines</p>
@@ -170,7 +264,17 @@ export default function DebriefScreen() {
         </div>
       )}
 
-      {/* ── 8. Analyst summary (host only) ───────────────────────────────────── */}
+      {/* ── 7. Chronicle ────────────────────────────────────────────────────── */}
+      <div style={s.card}>
+        <p style={s.sectionLabel}>The Aura Farmers Chronicle</p>
+        {debriefNarrative ? (
+          <p style={s.summaryText}>{debriefNarrative}</p>
+        ) : (
+          <p style={s.narrativeLoading}>Correspondent filing story…</p>
+        )}
+      </div>
+
+      {/* ── 8. Analyst summary (host only) ──────────────────────────────────── */}
       {isHost && adminSummary && (
         <div style={s.card}>
           <p style={s.sectionLabel}>Analyst Summary</p>
@@ -280,7 +384,114 @@ const s = {
     fontWeight: "700" as const,
     cursor: "pointer",
     flexShrink: 0,
-    alignSelf: "center" as const,
+  },
+  quitBtn: {
+    background: "transparent",
+    color: "#7a1a1a",
+    border: "2px solid #c89090",
+    padding: "0.7rem 2rem",
+    borderRadius: 8,
+    fontSize: "1rem",
+    fontWeight: "700" as const,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  quitBar: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    flexWrap: "wrap" as const,
+    gap: "1rem",
+  },
+  hostBtns: {
+    display: "flex",
+    gap: "0.75rem",
+    alignItems: "center",
+    flexShrink: 0,
+    flexWrap: "wrap" as const,
+  },
+
+  // Aura banner
+  auraBanner: {
+    borderRadius: 12,
+    padding: "2rem 1.5rem",
+    textAlign: "center" as const,
+    border: "2px solid",
+  },
+  auraBannerTop: {
+    background: "linear-gradient(135deg, #fffde7 0%, #fff9c4 100%)",
+    borderColor: "#f0c030",
+  },
+  auraBannerMid: {
+    background: "#f8f7f5",
+    borderColor: "#e2ddd6",
+  },
+  auraBannerBottom: {
+    background: "linear-gradient(135deg, #fff5f5 0%, #ffe8e8 100%)",
+    borderColor: "#e8a0a0",
+  },
+  auraComment: {
+    margin: 0,
+    fontSize: "clamp(1.4rem, 4vw, 2.2rem)",
+    fontWeight: "800" as const,
+    color: "#18181a",
+    lineHeight: 1.3,
+  },
+  auraRank: {
+    margin: "0.6rem 0 0",
+    fontSize: "1rem",
+    color: "#6b6b63",
+    fontWeight: 500,
+  },
+
+  // Player-only debrief layout
+  playerRoot: {
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "stretch",
+    gap: "1rem",
+    padding: "1.5rem 1rem 3rem",
+    minHeight: "100vh",
+    maxWidth: "480px",
+    margin: "0 auto",
+    width: "100%",
+  },
+  playerStatsCard: {
+    background: "#ffffff",
+    border: "1px solid #e2ddd6",
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  playerStatRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "0.75rem 1.25rem",
+    borderBottom: "1px solid #f0ede8",
+  },
+  playerStatLabel: {
+    fontSize: "0.85rem",
+    color: "#8a8a80",
+    fontWeight: 600,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+  },
+  playerStatValue: {
+    fontSize: "1.1rem",
+    fontWeight: "700" as const,
+    color: "#18181a",
+  },
+  playerLeaveBtn: {
+    background: "transparent",
+    color: "#7a1a1a",
+    border: "2px solid #c89090",
+    padding: "0.85rem",
+    borderRadius: 8,
+    fontSize: "1rem",
+    fontWeight: "700" as const,
+    cursor: "pointer",
+    width: "100%",
+    marginTop: "0.5rem",
   },
 
   // Podium
@@ -315,31 +526,12 @@ const s = {
   podiumRole: { fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: "0.06em" },
   podiumWorth: { fontSize: "1.2rem", fontWeight: "800" as const, color: "#18181a", marginTop: "0.1rem" },
 
-  // My result (non-podium)
-  myResult: {
-    display: "flex",
-    alignItems: "center",
-    gap: "1rem",
-    background: "#f4fbf4",
-    border: "2px solid #9ac89a",
-    borderRadius: 10,
-    padding: "1rem 1.25rem",
-    flexWrap: "wrap" as const,
-  },
-  myRank: { fontSize: "1.8rem", fontWeight: "800" as const, color: "#1d6b1d", minWidth: 48 },
-  myResultBody: { display: "flex", flexDirection: "column" as const, flex: 1, minWidth: 0 },
-  myResultName: { fontSize: "1.15rem", fontWeight: "700" as const, color: "#18181a" },
-  myResultRole: { fontSize: "0.8rem", color: "#8a8a80", textTransform: "uppercase" as const, letterSpacing: "0.06em" },
-  myResultStats: { display: "flex", alignItems: "center", gap: "0.75rem", flexShrink: 0 },
-  myNetWorth: { fontSize: "1.2rem", fontWeight: "700" as const, color: "#18181a" },
-
   // Stats strip
   statsStrip: {
     display: "grid",
     gridTemplateColumns: "repeat(6, 1fr)",
     gap: "0.75rem",
   },
-  // (responsive override applied inline where needed)
   statCell: {
     background: "#ffffff",
     border: "1px solid #e2ddd6",
@@ -415,6 +607,7 @@ const s = {
   headlineCycle: { fontSize: "0.75rem", color: "#9a9a90", fontWeight: 600, flexShrink: 0, textTransform: "uppercase" as const, letterSpacing: "0.05em" },
   headlineText: { fontSize: "0.95rem", color: "#3a3a36", lineHeight: 1.5, fontStyle: "italic" as const },
 
-  // Admin summary
+  // Narrative / summary text
   summaryText: { margin: 0, color: "#3a3a36", fontSize: "1rem", lineHeight: 1.8, whiteSpace: "pre-wrap" as const },
+  narrativeLoading: { margin: 0, color: "#9a9a90", fontStyle: "italic" as const, fontSize: "0.95rem" },
 } as const;

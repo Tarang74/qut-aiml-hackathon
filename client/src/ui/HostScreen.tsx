@@ -284,8 +284,8 @@ function MilestoneSummary() {
     .map(([id, { name, netWorth }]) => ({ id: Number(id), name, netWorth: parseFloat(netWorth) }))
     .sort((a, b) => b.netWorth - a.netWorth);
 
-  // Admin summary for the cycle that just completed (server sends it async, may arrive late)
-  const summaryReady = state.adminSummary !== null && state.adminSummary.cycle === state.cycle;
+  // Dedicated milestone summary — arrives async shortly after the phase change.
+  const summaryReady = state.milestoneSummary !== null && state.milestoneSummary.cycle === state.cycle;
 
   return (
     <div style={styles.milestoneCard}>
@@ -293,11 +293,11 @@ function MilestoneSummary() {
 
       {/* ── AI Narration — centrepiece ──────────────────────────────────── */}
       <div style={styles.narratorBlock}>
-        <span style={styles.narratorLabel}>Analyst Narration</span>
+        <span style={styles.narratorLabel}>Checkpoint Recap</span>
         {summaryReady ? (
-          <p style={styles.narratorText}>{state.adminSummary!.text}</p>
+          <p style={styles.narratorText}>{state.milestoneSummary!.text}</p>
         ) : (
-          <p style={styles.narratorLoading}>Generating analysis…</p>
+          <p style={styles.narratorLoading}>Generating recap…</p>
         )}
       </div>
 

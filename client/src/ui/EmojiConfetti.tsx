@@ -121,6 +121,9 @@ export default function EmojiConfetti() {
 
   // Detect new cycle events arriving and spawn particles.
   useEffect(() => {
+    // Never fire confetti on the debrief screen — snapshot replays would trigger
+    // it spuriously for any player who joins or reconnects after game-over.
+    if (state.phase === "game_over") return;
     const prev = prevEventsRef.current;
     const curr = state.cycleEvents;
     if (curr === prev || curr.length === 0) return;
@@ -137,7 +140,7 @@ export default function EmojiConfetti() {
         particlesRef.current.push(...makeParticles(spec, w, h));
       }
     }
-  }, [state.cycleEvents]);
+  }, [state.cycleEvents, state.phase]);
 
   // Resize canvas to match viewport.
   useEffect(() => {

@@ -39,6 +39,11 @@ async fn main() {
 
     let mut world = World::new(cfg.game_seed);
     world.cycle_duration_secs = cfg.cycle_secs;
+    let ss = state.session_store.clone();
+    let on_game_end = std::sync::Arc::new(move || {
+        tracing::info!("Clearing player sessions");
+        ss.clear_players();
+    });
     tokio::spawn(sim::run_loop(
         world,
         state.broadcast_tx.clone(),
@@ -48,12 +53,15 @@ async fn main() {
         cfg.game_seed,
         state.personal_senders.clone(),
         state.host_senders.clone(),
+        state.game_code.clone(),
+        on_game_end,
     ));
 
     let spa_fallback = ServeFile::new(format!("{}/index.html", cfg.static_dir));
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .route("/api/lobby", get(api_lobby))
+        .route("/api/game/code", post(api_set_game_code))
         .route("/api/session", get(api_session_get))
         .route("/api/session/host", post(api_session_host))
         .fallback_service(ServeDir::new(&cfg.static_dir).fallback(spa_fallback))
@@ -122,6 +130,24 @@ async fn api_lobby(State(state): State<AppState>) -> Json<LobbyResponse> {
         game_code,
         is_public: true,
     })
+}
+
+// ── /api/game/code (POST) ──────────────────────────────────────────────────────
+// Called by CreateScreen as soon as a code is generated, so /api/lobby reflects
+// the code immediately — before the host clicks "Watch as Host".
+
+#[derive(Deserialize)]
+struct SetCodeRequest {
+    game_code: String,
+}
+
+async fn api_set_game_code(
+    State(state): State<AppState>,
+    Json(body): Json<SetCodeRequest>,
+) -> impl IntoResponse {
+    tracing::info!("Game code registered: {}", body.game_code);
+    *state.game_code.lock().unwrap() = Some(body.game_code);
+    Json(serde_json::json!({ "ok": true }))
 }
 
 // ── /api/session ───────────────────────────────────────────────────────────────

@@ -94,10 +94,14 @@ export default function App() {
   const navigateRef = useRef(navigate);
   useEffect(() => { navigateRef.current = navigate; }, [navigate]);
 
-  const onMessage = useCallback(
-    (msg: ServerMsg) => dispatch({ type: "server_msg", msg }),
-    [],
-  );
+  const onMessage = useCallback((msg: ServerMsg) => {
+    // Drop the session cookie on reset or game-over so stale identity doesn't
+    // auto-rejoin this client into the next game on reconnect.
+    if (msg.type === "game_reset" || msg.type === "game_over") {
+      document.cookie = "aura_session=; Max-Age=0; Path=/";
+    }
+    dispatch({ type: "server_msg", msg });
+  }, []);
   const onConnect = useCallback(() => dispatch({ type: "ws_connected" }), []);
   const onDisconnect = useCallback(() => {
     // Server restart invalidates the in-memory session store.

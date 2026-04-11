@@ -68,6 +68,9 @@ export interface GameState {
   // Per-cycle admin summary (Sonnet, only visible to admin/host)
   adminSummary: string | null;
 
+  // All players' net worths — populated from PlayerState broadcasts (host uses this for leaderboard)
+  playerNetWorths: Record<number, { name: string; netWorth: string }>;
+
   // End-of-game structured stats (no LLM)
   debrief: DebriefStats | null;
 
@@ -111,6 +114,7 @@ const INITIAL_STATE: GameState = {
   headlines: [],
   myFeedback: null,
   adminSummary: null,
+  playerNetWorths: {},
   debrief: null,
   error: null,
   gameCode: null,
@@ -228,16 +232,24 @@ function reducer(state: GameState, action: GameAction): GameState {
         case "cycle_events":
           return { ...state, cycleEvents: msg.events };
 
-        case "player_state":
-          // Each player only processes their own state update.
-          if (msg.player_id !== state.myPlayerId) return state;
+        case "player_state": {
+          // Track net worth for all players (host leaderboard) regardless of identity.
+          const updatedNetWorths = {
+            ...state.playerNetWorths,
+            [msg.player_id]: { name: msg.name, netWorth: msg.net_worth },
+          };
+          if (msg.player_id !== state.myPlayerId) {
+            return { ...state, playerNetWorths: updatedNetWorths };
+          }
           return {
             ...state,
             myCash: msg.cash,
             myShares: msg.shares,
             myAura: msg.aura,
             myNetWorth: msg.net_worth,
+            playerNetWorths: updatedNetWorths,
           };
+        }
 
         case "player_feedback":
           // Only store feedback addressed to this player.

@@ -317,50 +317,56 @@ pub async fn run_loop(
             break 'game;
         }
 
-        // ── Summary phase — wait for host to continue ─────────────────────
-        world.phase = CyclePhase::Summary;
-        broadcast_msg(
-            &broadcast_tx,
-            &ServerMsg::CyclePhase {
-                phase: "summary".to_string(),
-                cycle: world.cycle,
-                seconds_remaining: 0,
-            },
-        );
+        // ── Summary phase — only every 5 cycles; otherwise auto-advance ───────
+        // world.cycle was incremented by resolve_cycle(), so the cycle that just
+        // finished is world.cycle - 1.  Pause at multiples of 5 (cycles 5, 10, …).
+        let is_milestone = world.cycle.is_multiple_of(5) && world.cycle > 0;
+        if is_milestone {
+            world.phase = CyclePhase::Summary;
+            broadcast_msg(
+                &broadcast_tx,
+                &ServerMsg::CyclePhase {
+                    phase: "summary".to_string(),
+                    cycle: world.cycle,
+                    seconds_remaining: 0,
+                },
+            );
 
-        let mut reset_in_summary = false;
-        loop {
-            let Some(msg) = action_rx.recv().await else {
-                return;
-            };
-            if let actions::InboundMsg::Admin {
-                command: actions::AdminCommand::ContinueGame,
-            } = &msg
-            {
-                break;
+            let mut reset_in_summary = false;
+            loop {
+                let Some(msg) = action_rx.recv().await else {
+                    return;
+                };
+                if let actions::InboundMsg::Admin {
+                    command: actions::AdminCommand::ContinueGame,
+                } = &msg
+                {
+                    break;
+                }
+                reset_in_summary = handle_inbound(&mut world, msg, &broadcast_tx, &snapshot);
+                if reset_in_summary || world.game_over {
+                    break;
+                }
             }
-            reset_in_summary = handle_inbound(&mut world, msg, &broadcast_tx, &snapshot);
-            if reset_in_summary || world.game_over {
-                break;
+
+            if reset_in_summary {
+                let cycle_secs = world.cycle_duration_secs;
+                world = World::new(seed);
+                world.cycle_duration_secs = cycle_secs;
+                admin_context.lock().unwrap().clear();
+                broadcast_msg(&broadcast_tx, &ServerMsg::GameReset {});
+                tracing::info!("Game reset by admin (during summary)");
+                continue 'game;
+            }
+
+            if world.game_over {
+                tracing::info!("Game over: {:?}", world.game_over_reason);
+                let stats = world.compute_debrief();
+                broadcast_msg(&broadcast_tx, &ServerMsg::Debrief { stats });
+                break 'game;
             }
         }
-
-        if reset_in_summary {
-            let cycle_secs = world.cycle_duration_secs;
-            world = World::new(seed);
-            world.cycle_duration_secs = cycle_secs;
-            admin_context.lock().unwrap().clear();
-            broadcast_msg(&broadcast_tx, &ServerMsg::GameReset {});
-            tracing::info!("Game reset by admin (during summary)");
-            continue 'game;
-        }
-
-        if world.game_over {
-            tracing::info!("Game over: {:?}", world.game_over_reason);
-            let stats = world.compute_debrief();
-            broadcast_msg(&broadcast_tx, &ServerMsg::Debrief { stats });
-            break 'game;
-        }
+        // Non-milestone cycles fall through here and loop straight back to decision.
     }
 }
 

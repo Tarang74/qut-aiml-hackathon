@@ -67,7 +67,6 @@ export default function HostScreen() {
   return (
     <div style={styles.root}>
       <div style={styles.header}>
-        <span style={styles.badge}>HOST VIEW</span>
         <span style={styles.phase}>
           {state.paused ? "⏸ PAUSED" : phase}
           {joinUrl && <span style={styles.urlInline}> · {joinUrl}</span>}
@@ -93,6 +92,9 @@ export default function HostScreen() {
         )}
       </div>
 
+      {/* ── Milestone summary (every 5 cycles) ──────────────────────────── */}
+      {isSummary && <MilestoneSummary />}
+
       {/* ── Price + chart ─────────────────────────────────────────────────── */}
       <div style={styles.priceCard}>
         <div style={styles.priceLine}>
@@ -116,6 +118,9 @@ export default function HostScreen() {
                   <MiniStat label="Ask"  value={String(state.askDepth)} />
                   <MiniStat label="Vol"  value={String(state.cycleVolume)} />
                   <MiniStat label="Cycle" value={String(state.cycle)} />
+                  {state.phase !== "lobby" && (
+                    <MiniStat label="Players" value={String(state.knownPlayers.length)} />
+                  )}
                 </>
               );
             })()}
@@ -126,40 +131,42 @@ export default function HostScreen() {
         </div>
       </div>
 
-      {/* ── Player list ───────────────────────────────────────────────────── */}
-      <div style={styles.card}>
-        <h2 style={styles.cardTitle}>Players ({state.knownPlayers.length})</h2>
-        {state.knownPlayers.length === 0 ? (
-          <p style={styles.empty}>No players yet — share the join URL.</p>
-        ) : (
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>#</th>
-                <th style={styles.th}>Name</th>
-                <th style={styles.th}>Role</th>
-                <th style={styles.th}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.knownPlayers.map((p, i) => (
-                <tr key={p.id}>
-                  <td style={styles.td}>{i + 1}</td>
-                  <td style={styles.td}>{p.name}</td>
-                  <td style={{ ...styles.td, color: p.role === "farmer" ? "#1d6b1d" : "#0d5858" }}>
-                    {p.role}
-                  </td>
-                  <td style={styles.td}>
-                    <button style={styles.kickBtn} onClick={() => kickPlayer(p.id)}>
-                      Kick
-                    </button>
-                  </td>
+      {/* ── Player list — full table in lobby only, count shown in-game via MiniStat */}
+      {state.phase === "lobby" && (
+        <div style={styles.card}>
+          <h2 style={styles.cardTitle}>Players ({state.knownPlayers.length})</h2>
+          {state.knownPlayers.length === 0 ? (
+            <p style={styles.empty}>No players yet — share the join URL.</p>
+          ) : (
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>#</th>
+                  <th style={styles.th}>Name</th>
+                  <th style={styles.th}>Role</th>
+                  <th style={styles.th}></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+              </thead>
+              <tbody>
+                {state.knownPlayers.map((p, i) => (
+                  <tr key={p.id}>
+                    <td style={styles.td}>{i + 1}</td>
+                    <td style={styles.td}>{p.name}</td>
+                    <td style={{ ...styles.td, color: p.role === "farmer" ? "#1d6b1d" : "#0d5858" }}>
+                      {p.role}
+                    </td>
+                    <td style={styles.td}>
+                      <button style={styles.kickBtn} onClick={() => kickPlayer(p.id)}>
+                        Kick
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       {/* ── Cycle events (summary phase) ─────────────────────────────────── */}
       {isSummary && state.cycleEvents.length > 0 && (
@@ -179,12 +186,68 @@ export default function HostScreen() {
         </div>
       )}
 
-      {/* ── Admin AI summary ─────────────────────────────────────────────── */}
-      {state.adminSummary && (
+      {/* ── Admin AI summary — shown outside summary phase only ──────────── */}
+      {!isSummary && state.adminSummary && (
         <div style={styles.card}>
           <h2 style={styles.cardTitle}>Analyst Summary</h2>
           <p style={styles.summary}>{state.adminSummary}</p>
         </div>
+      )}
+    </div>
+  );
+}
+
+function MilestoneSummary() {
+  const state = useGameState();
+  const hist = state.priceHistory.map(parseFloat).filter(n => !isNaN(n));
+
+  // Price 5 cycles ago vs now
+  const nowPrice = hist.length ? hist[hist.length - 1] : null;
+  const thenPrice = hist.length >= 6 ? hist[hist.length - 6] : hist[0] ?? null;
+  const priceDelta = nowPrice != null && thenPrice != null && thenPrice !== 0
+    ? ((nowPrice - thenPrice) / thenPrice) * 100
+    : null;
+
+  // Leaderboard from accumulated PlayerState broadcasts
+  const leaderboard = Object.entries(state.playerNetWorths)
+    .map(([id, { name, netWorth }]) => ({ id: Number(id), name, netWorth: parseFloat(netWorth) }))
+    .sort((a, b) => b.netWorth - a.netWorth);
+
+  return (
+    <div style={styles.milestoneCard}>
+      <h2 style={styles.milestoneTitle}>Checkpoint — {state.cycle} cycles complete</h2>
+      <div style={styles.milestoneBody}>
+        {/* Price block */}
+        <div style={styles.milestoneStat}>
+          <span style={styles.milestoneStatLabel}>Price (last 5 cycles)</span>
+          <span style={styles.milestoneStatValue}>
+            {nowPrice != null ? `$${nowPrice.toFixed(2)}` : "—"}
+            {priceDelta != null && (
+              <span style={{ color: priceDelta >= 0 ? "#1d6b1d" : "#7a1a1a", marginLeft: "0.5rem", fontSize: "0.9em" }}>
+                {priceDelta >= 0 ? "+" : ""}{priceDelta.toFixed(1)}%
+              </span>
+            )}
+          </span>
+        </div>
+
+        {/* Leaderboard */}
+        {leaderboard.length > 0 && (
+          <div style={styles.milestoneLeaderboard}>
+            <span style={styles.milestoneStatLabel}>Leaderboard</span>
+            {leaderboard.map((p, i) => (
+              <div key={p.id} style={styles.leaderRow}>
+                <span style={styles.leaderRank}>{i + 1}</span>
+                <span style={styles.leaderName}>{p.name}</span>
+                <span style={styles.leaderWorth}>${p.netWorth.toFixed(0)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Admin summary if available */}
+      {state.adminSummary && (
+        <p style={styles.milestoneSummaryText}>{state.adminSummary}</p>
       )}
     </div>
   );
@@ -204,14 +267,14 @@ const styles = {
     display: "flex",
     flexDirection: "column" as const,
     alignItems: "stretch",
-    gap: "1.75rem",
-    padding: "2rem 3rem",
+    gap: "1.25rem",
+    padding: "1rem",
     maxWidth: 1100,
     margin: "0 auto",
     width: "100%",
     minHeight: "100vh",
     background: "#f5f3ef",
-    paddingTop: `calc(2rem + ${TICKER_HEIGHT}px)`,
+    paddingTop: `calc(1rem + ${TICKER_HEIGHT}px)`,
   },
   header: {
     display: "flex",
@@ -272,9 +335,9 @@ const styles = {
   },
   priceCard: {
     background: "#ffffff",
-    border: "1px solid #ddd9d2",
+    border: "1px solid #e2ddd6",
     borderRadius: 10,
-    padding: "1.75rem 2rem",
+    padding: "1.1rem 1.25rem",
   },
   priceLine: {
     display: "flex",
@@ -295,9 +358,9 @@ const styles = {
   },
   card: {
     background: "#ffffff",
-    border: "1px solid #ddd9d2",
+    border: "1px solid #e2ddd6",
     borderRadius: 10,
-    padding: "1.5rem 2rem",
+    padding: "1rem 1.25rem",
   },
   cardTitle: { margin: "0 0 1rem", fontSize: "0.85rem", color: "#8a8a80", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const },
   empty: { color: "#9a9a90", fontSize: "1.1rem", margin: 0 },
@@ -339,5 +402,83 @@ const styles = {
     cursor: "pointer",
     flexShrink: 0,
     letterSpacing: "0.02em",
+  },
+  milestoneCard: {
+    background: "#fffdf5",
+    border: "2px solid #c8b060",
+    borderRadius: 10,
+    padding: "1.25rem 1.5rem",
+  },
+  milestoneTitle: {
+    margin: "0 0 1rem",
+    fontSize: "1rem",
+    fontWeight: "700" as const,
+    color: "#7a5010",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase" as const,
+  },
+  milestoneBody: {
+    display: "flex",
+    gap: "2rem",
+    flexWrap: "wrap" as const,
+    alignItems: "flex-start",
+  },
+  milestoneStat: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "0.25rem",
+  },
+  milestoneStatLabel: {
+    fontSize: "0.75rem",
+    color: "#8a8a80",
+    fontWeight: "700" as const,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+  },
+  milestoneStatValue: {
+    fontSize: "1.5rem",
+    fontWeight: "800" as const,
+    color: "#2a2a26",
+  },
+  milestoneLeaderboard: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "0.35rem",
+    flex: 1,
+    minWidth: 180,
+  },
+  leaderRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.6rem",
+    padding: "0.3rem 0",
+    borderBottom: "1px solid #e8e4df",
+  },
+  leaderRank: {
+    fontSize: "0.8rem",
+    fontWeight: "700" as const,
+    color: "#8a8a80",
+    minWidth: 18,
+  },
+  leaderName: {
+    flex: 1,
+    fontSize: "1rem",
+    color: "#2a2a26",
+    fontWeight: 500,
+  },
+  leaderWorth: {
+    fontSize: "1rem",
+    fontWeight: "700" as const,
+    color: "#1d6b1d",
+    fontFamily: "monospace",
+  },
+  milestoneSummaryText: {
+    margin: "1rem 0 0",
+    color: "#3a3a36",
+    fontSize: "0.95rem",
+    lineHeight: 1.7,
+    whiteSpace: "pre-wrap" as const,
+    borderTop: "1px solid #e8ddb0",
+    paddingTop: "0.75rem",
   },
 } as const;

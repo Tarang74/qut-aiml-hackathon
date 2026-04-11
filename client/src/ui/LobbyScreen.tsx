@@ -107,6 +107,25 @@ export default function LobbyScreen({ code }: Props) {
           </select>
         </label>
 
+        {/* Role tip card */}
+        {form.role === "trader" ? (
+          <div style={styles.roleCard}>
+            <p style={styles.roleCardTitle}>📈 Trader</p>
+            <p style={styles.roleCardText}>
+              You start with <strong>$15,000 cash</strong> and no farm. Your edge is the market: buy &amp; sell CornCo shares, write options to collect premium, and use power moves like <em>Corner Market</em> or <em>Dump All</em> to swing the price. Watch bid/ask depth and ride the momentum.
+            </p>
+            <p style={styles.roleCardHint}>Best for: market-savvy players who like reading charts and timing trades.</p>
+          </div>
+        ) : (
+          <div style={styles.roleCard}>
+            <p style={styles.roleCardTitle}>🚜 Farmer</p>
+            <p style={styles.roleCardText}>
+              You start with <strong>$10,000 cash</strong> plus a farm. Each cycle: <em>Plant → Harvest → Sell</em> corn through mills. Hire workers to boost yield. Buy options to hedge your harvest price against a market crash.
+            </p>
+            <p style={styles.roleCardHint}>Best for: players who like building an empire and controlling supply.</p>
+          </div>
+        )}
+
         <button
           style={{
             ...styles.btn,
@@ -192,4 +211,13 @@ const styles = {
   },
   backLink: { textAlign: "center" as const, fontSize: "0.8rem" },
   link: { color: "#8a8a80", cursor: "pointer", textDecoration: "underline" },
+  roleCard: {
+    background: "#fffbea",
+    border: "1px solid #e8d878",
+    borderRadius: 8,
+    padding: "0.75rem 0.9rem",
+  },
+  roleCardTitle: { margin: "0 0 0.35rem", fontSize: "0.875rem", fontWeight: "700" as const, color: "#3a3010" },
+  roleCardText: { margin: "0 0 0.35rem", fontSize: "0.8rem", color: "#5a4a10", lineHeight: 1.6 },
+  roleCardHint: { margin: 0, fontSize: "0.72rem", color: "#8a7a40", fontStyle: "italic" as const },
 } as const;

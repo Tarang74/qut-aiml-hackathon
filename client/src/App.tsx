@@ -33,6 +33,7 @@ import SummaryScreen from "./ui/SummaryScreen";
 import DebriefScreen from "./ui/DebriefScreen";
 import NewsTicker from "./ui/NewsTicker";
 import EmojiConfetti from "./ui/EmojiConfetti";
+import EventBanner from "./ui/EventBanner";
 
 // isHost uses sessionStorage (per-tab) so two tabs on the same machine can have
 // one as host and one as player without colliding.
@@ -142,6 +143,7 @@ export default function App() {
         <WsSendContext.Provider value={send}>
           <NavigateContext.Provider value={navigate}>
             <NewsTicker />
+            <EventBanner />
             <EmojiConfetti />
             {screen}
           </NavigateContext.Provider>

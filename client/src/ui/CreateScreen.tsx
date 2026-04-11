@@ -47,7 +47,6 @@ export default function CreateScreen() {
   return (
     <div style={styles.root}>
       <h1 style={styles.title}>Aura Farmers</h1>
-      <p style={styles.sub}>Generate a code and share the link with your players.</p>
 
       {!local.code ? (
         <button
@@ -63,7 +62,6 @@ export default function CreateScreen() {
       ) : (
         <div style={styles.codeBlock}>
           <div style={styles.code}>{local.code}</div>
-          <p style={styles.hint}>Share this link:</p>
 
           <div style={styles.urlRow}>
             <span style={styles.url}>{joinUrl}</span>
@@ -110,7 +108,7 @@ export default function CreateScreen() {
               Watch as Host →
             </button>
             <button
-              style={{ ...styles.btn, background: "#f0eee9", color: "#7a7a70", border: "1px solid #ddd9d2" }}
+              style={{ ...styles.btn, background: "#f5f3ef", color: "#6b6b63", border: "1.5px solid #e2ddd6" }}
               onClick={() => {
                 const code = String(Math.floor(1000 + Math.random() * 9000));
                 gameDispatch({ type: "set_game_code", code });
@@ -133,22 +131,22 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     minHeight: "100vh",
-    gap: "1.5rem",
-    padding: "2rem",
+    gap: "1.25rem",
+    padding: "1.5rem 1rem",
     background: "#f5f3ef",
   },
-  title: { fontSize: "2rem", margin: 0, color: "#18181a" },
-  sub: { color: "#7a7a70", textAlign: "center" as const, maxWidth: 360, margin: 0 },
+  title: { fontSize: "2.2rem", margin: 0, color: "#18181a", fontWeight: "800" as const, letterSpacing: "-0.02em" },
+  sub: { color: "#8a8a80", textAlign: "center" as const, maxWidth: 360, margin: 0, fontSize: "0.9rem" },
   btn: {
-    background: "#e8f5e8",
-    color: "#1d6b1d",
-    border: "1px solid #4a9a4a",
-    padding: "0.6rem 1.5rem",
-    borderRadius: 4,
+    background: "#1d6b1d",
+    color: "#fff",
+    border: "none",
+    padding: "0.7rem 1.5rem",
+    borderRadius: 8,
     fontFamily: "inherit",
-    fontSize: "1rem",
+    fontSize: "0.95rem",
     cursor: "pointer",
-    fontWeight: "600" as const,
+    fontWeight: "700" as const,
   },
   codeBlock: {
     display: "flex",
@@ -156,16 +154,17 @@ const styles = {
     alignItems: "center",
     gap: "0.75rem",
     background: "#ffffff",
-    border: "1px solid #ddd9d2",
-    borderRadius: 8,
-    padding: "2rem",
+    border: "1px solid #e2ddd6",
+    borderRadius: 12,
+    padding: "1.5rem 1.25rem",
     width: "100%",
     maxWidth: 420,
+    boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
   },
   code: {
-    fontSize: "4rem",
-    fontWeight: "bold" as const,
-    letterSpacing: "0.3em",
+    fontSize: "3.5rem",
+    fontWeight: "800" as const,
+    letterSpacing: "0.25em",
     color: "#1d6b1d",
   },
   hint: { color: "#8a8a80", fontSize: "0.8rem", margin: 0 },

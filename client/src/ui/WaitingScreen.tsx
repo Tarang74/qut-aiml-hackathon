@@ -9,7 +9,6 @@ export default function WaitingScreen() {
   return (
     <div style={s.root}>
       <div style={s.card}>
-        <p style={s.label}>AURA FARMERS</p>
         <h1 style={s.heading}>Waiting for host to start…</h1>
         <p style={s.sub}>
           You've joined as <strong style={s.name}>{state.myName}</strong> —{" "}

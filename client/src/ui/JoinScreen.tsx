@@ -77,11 +77,6 @@ export default function JoinScreen() {
       dispatch({ type: "set_error", msg: "Enter the 4-digit code from your host." });
       return;
     }
-    // If the lobby check has completed and the code doesn't match the active game, reject early.
-    if (local.lobbyChecked && local.lobby?.game_code !== local.value) {
-      dispatch({ type: "set_error", msg: "No active game with that code." });
-      return;
-    }
     navigate(`/${local.value}`);
   }
 

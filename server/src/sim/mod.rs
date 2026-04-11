@@ -62,6 +62,13 @@ fn broadcast_all_state(
         cycle: world.cycle,
         seconds_remaining: 0,
     });
+    if world.paused {
+        push(ServerMsg::GamePaused {});
+    } else {
+        push(ServerMsg::GameResumed {
+            seconds_remaining: 0,
+        });
+    }
     push(ServerMsg::PriceUpdate {
         price: world.price_as_decimal(),
         history: world.history_snapshot(),
@@ -106,6 +113,65 @@ fn broadcast_all_state(
     *snapshot.lock().unwrap() = new_snap;
 }
 
+/// Upsert the latest cycle phase into reconnect snapshot so refreshes recover
+/// the current phase even before the next full-state flush.
+fn upsert_snapshot_cycle_phase(
+    snapshot: &Mutex<Vec<Arc<String>>>,
+    phase: &str,
+    cycle: u64,
+    seconds_remaining: u64,
+) {
+    let msg = ServerMsg::CyclePhase {
+        phase: phase.to_string(),
+        cycle,
+        seconds_remaining,
+    };
+    let Ok(json) = serde_json::to_string(&msg) else {
+        return;
+    };
+    let arc = Arc::new(json);
+
+    let mut snap = snapshot.lock().unwrap();
+    for existing in snap.iter_mut() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(existing.as_str()) {
+            if v.get("type").and_then(|t| t.as_str()) == Some("cycle_phase") {
+                *existing = arc.clone();
+                return;
+            }
+        }
+    }
+    snap.push(arc);
+}
+
+/// Upsert pause state into reconnect snapshot so refreshes recover whether the
+/// decision timer is currently paused.
+fn upsert_snapshot_pause_state(
+    snapshot: &Mutex<Vec<Arc<String>>>,
+    paused: bool,
+    seconds_remaining: u64,
+) {
+    let msg = if paused {
+        ServerMsg::GamePaused {}
+    } else {
+        ServerMsg::GameResumed { seconds_remaining }
+    };
+    let Ok(json) = serde_json::to_string(&msg) else {
+        return;
+    };
+    let arc = Arc::new(json);
+
+    let mut snap = snapshot.lock().unwrap();
+    snap.retain(|existing| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(existing.as_str()) {
+            let t = v.get("type").and_then(|t| t.as_str());
+            t != Some("game_paused") && t != Some("game_resumed")
+        } else {
+            true
+        }
+    });
+    snap.push(arc);
+}
+
 /// Main game loop.  Runs as a background tokio task.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_loop(
@@ -144,6 +210,7 @@ pub async fn run_loop(
             tracing::info!("Host started the game");
             world.paused = true;
             broadcast_msg(&broadcast_tx, &ServerMsg::GamePaused {});
+            upsert_snapshot_pause_state(snapshot.as_ref(), true, 0);
             break 'lobby;
         }
         let reset = handle_inbound(&mut world, msg, &broadcast_tx, &snapshot);
@@ -169,6 +236,12 @@ pub async fn run_loop(
                 cycle: world.cycle,
                 seconds_remaining: world.cycle_duration_secs,
             },
+        );
+        upsert_snapshot_cycle_phase(
+            &snapshot,
+            "decision",
+            world.cycle,
+            world.cycle_duration_secs,
         );
 
         let mut decision_end = Instant::now() + Duration::from_secs(world.cycle_duration_secs);
@@ -206,6 +279,7 @@ pub async fn run_loop(
                                 cycle: world.cycle,
                                 seconds_remaining: secs_left,
                             });
+                            upsert_snapshot_cycle_phase(&snapshot, "decision", world.cycle, secs_left);
                         }
                     }
                 }
@@ -214,7 +288,7 @@ pub async fn run_loop(
                     deadline.as_mut().reset(Instant::now() + Duration::from_secs(86400));
                 }
             }
-            if reset_requested || world.game_over || all_locked_in {
+            if reset_requested || world.game_over || (!world.paused && all_locked_in) {
                 if all_locked_in {
                     tracing::info!("All players locked in — advancing cycle early");
                 }
@@ -262,6 +336,7 @@ pub async fn run_loop(
                 seconds_remaining: 0,
             },
         );
+        upsert_snapshot_cycle_phase(&snapshot, "resolving", world.cycle, 0);
 
         let cycle_events = world.resolve_cycle();
         broadcast_all_state(&world, &broadcast_tx, &snapshot, &cycle_events);
@@ -392,6 +467,7 @@ pub async fn run_loop(
                     seconds_remaining: 0,
                 },
             );
+            upsert_snapshot_cycle_phase(&snapshot, "summary", world.cycle, 0);
 
             // Spawn a dedicated milestone recap — broadcast to all players.
             if !api_key.is_empty() {
@@ -591,6 +667,7 @@ fn handle_inbound(
                 AdminCommand::PauseGame => {
                     world.paused = true;
                     broadcast_msg(tx, &ServerMsg::GamePaused {});
+                    upsert_snapshot_pause_state(snapshot, true, 0);
                 }
                 AdminCommand::ResumeGame => {
                     world.paused = false;
@@ -600,6 +677,7 @@ fn handle_inbound(
                             seconds_remaining: 0,
                         },
                     );
+                    upsert_snapshot_pause_state(snapshot, false, 0);
                 }
                 AdminCommand::SetCycleSecs { secs } => {
                     world.cycle_duration_secs = secs.max(5);

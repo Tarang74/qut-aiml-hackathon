@@ -51,7 +51,7 @@ export default function HostScreen() {
   const [localSecs, setLocalSecs] = useState<number | null>(null);
   useEffect(() => {
     // Only tick during a live decision phase; hide before game starts or when paused.
-    if (state.phase !== "decision" || state.cycle === 0) { setLocalSecs(null); return; }
+    if (state.phase !== "decision") { setLocalSecs(null); return; }
     if (state.paused) return; // freeze display, don't start a new interval
     setLocalSecs(state.secondsRemaining);
     const id = setInterval(() => setLocalSecs(s => (s !== null && s > 0 ? s - 1 : s)), 1000);

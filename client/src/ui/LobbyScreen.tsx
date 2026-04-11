@@ -64,12 +64,9 @@ export default function LobbyScreen({ code }: Props) {
   useEffect(() => {
     fetch("/api/lobby")
       .then((r) => r.json())
-      .then((data: { game_code: string | null }) => {
-        if (data.game_code === code) {
-          dispatch({ type: "found" });
-        } else {
-          dispatch({ type: "not_found" });
-        }
+      .then((_data: { game_code: string | null }) => {
+        // Let server-side join validation be authoritative.
+        dispatch({ type: "found" });
       })
       .catch(() => {
         // Network error — don't block, let the WS connection surface the truth.

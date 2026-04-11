@@ -43,6 +43,7 @@ export interface GameState {
   // Market
   price: string; // Decimal serialised as string — parse with parseFloat() for display
   priceHistory: string[];
+  volumeHistory: number[];
   bidDepth: number;
   askDepth: number;
   cycleVolume: number;
@@ -72,6 +73,10 @@ export interface GameState {
 
   // All players' net worths — populated from PlayerState broadcasts (host uses this for leaderboard)
   playerNetWorths: Record<number, { name: string; netWorth: string }>;
+  // Latest option strike list per player from PlayerState updates.
+  playerOptionStrikes: Record<number, string[]>;
+  // Latest option positions per player for strike-level host summaries.
+  playerOptionPositions: Record<number, Array<{ strike: string; long: boolean; quantity: number }>>;
 
   // End-of-game structured stats (no LLM)
   debrief: DebriefStats | null;
@@ -104,6 +109,7 @@ const INITIAL_STATE: GameState = {
   secondsRemaining: 0,
   price: "100",
   priceHistory: [],
+  volumeHistory: [],
   bidDepth: 0,
   askDepth: 0,
   cycleVolume: 0,
@@ -120,6 +126,8 @@ const INITIAL_STATE: GameState = {
   adminSummary: null,
   milestoneSummary: null,
   playerNetWorths: {},
+  playerOptionStrikes: {},
+  playerOptionPositions: {},
   debrief: null,
   debriefNarrative: null,
   error: null,
@@ -219,10 +227,16 @@ function reducer(state: GameState, action: GameAction): GameState {
         }
 
         case "price_update":
+          // Keep a rolling volume series aligned to incoming price history length.
+          // Server currently emits latest cycle_volume, so we append it over time.
+          const nextVolumeHistory = [...state.volumeHistory, msg.cycle_volume].slice(
+            -Math.max(msg.history.length, 1),
+          );
           return {
             ...state,
             price: msg.price,
             priceHistory: msg.history,
+            volumeHistory: nextVolumeHistory,
             bidDepth: msg.bid_depth,
             askDepth: msg.ask_depth,
             cycleVolume: msg.cycle_volume,
@@ -256,8 +270,25 @@ function reducer(state: GameState, action: GameAction): GameState {
             ...state.playerNetWorths,
             [msg.player_id]: { name: msg.name, netWorth: msg.net_worth },
           };
+          const updatedOptionStrikes = {
+            ...state.playerOptionStrikes,
+            [msg.player_id]: msg.options.map((o) => o.strike),
+          };
+          const updatedOptionPositions = {
+            ...state.playerOptionPositions,
+            [msg.player_id]: msg.options.map((o) => ({
+              strike: o.strike,
+              long: o.long,
+              quantity: o.quantity,
+            })),
+          };
           if (msg.player_id !== state.myPlayerId) {
-            return { ...state, playerNetWorths: updatedNetWorths };
+            return {
+              ...state,
+              playerNetWorths: updatedNetWorths,
+              playerOptionStrikes: updatedOptionStrikes,
+              playerOptionPositions: updatedOptionPositions,
+            };
           }
           return {
             ...state,
@@ -266,6 +297,8 @@ function reducer(state: GameState, action: GameAction): GameState {
             myAura: msg.aura,
             myNetWorth: msg.net_worth,
             playerNetWorths: updatedNetWorths,
+            playerOptionStrikes: updatedOptionStrikes,
+            playerOptionPositions: updatedOptionPositions,
           };
         }
 

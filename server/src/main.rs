@@ -20,6 +20,7 @@ use tracing_subscriber::EnvFilter;
 
 use net::gateway::AppState;
 use net::sessions::SessionData;
+use sim::actions::{AdminCommand, InboundMsg};
 use sim::world::World;
 
 const PLAYER_ID_START: u64 = 2001;
@@ -65,6 +66,7 @@ async fn main() {
         .route("/api/game/code", post(api_set_game_code))
         .route("/api/session", get(api_session_get))
         .route("/api/session/host", post(api_session_host))
+        .route("/api/session/start", post(api_session_start))
         .route("/api/session/clear", post(api_session_clear))
         .fallback_service(ServeDir::new(&cfg.static_dir).fallback(spa_fallback))
         .with_state(state);
@@ -342,4 +344,44 @@ async fn api_session_clear(headers: HeaderMap, State(state): State<AppState>) ->
         ],
         Json(serde_json::json!({ "ok": true })),
     )
+}
+
+// ── /api/session/start (POST) ────────────────────────────────────────────────
+
+async fn api_session_start(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    let cookie_str = headers
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let server_cookie_ok =
+        net::sessions::SessionStore::parse_cookie_value(cookie_str, "aura_server")
+            .is_some_and(|v| v == *state.server_token);
+
+    if !server_cookie_ok {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "ok": false, "error": "invalid session" })),
+        );
+    }
+
+    let is_host = net::sessions::SessionStore::parse_cookie(cookie_str)
+        .and_then(|sid| state.session_store.get(sid))
+        .is_some_and(|s| matches!(s, SessionData::Host { .. }));
+
+    if !is_host {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "ok": false, "error": "host session required" })),
+        );
+    }
+
+    let _ = state
+        .action_tx
+        .send(InboundMsg::Admin {
+            command: AdminCommand::StartGame,
+        })
+        .await;
+
+    (StatusCode::OK, Json(serde_json::json!({ "ok": true })))
 }

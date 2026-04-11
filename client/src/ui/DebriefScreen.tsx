@@ -270,7 +270,7 @@ export default function DebriefScreen() {
 
       {/* ── 7. Chronicle ────────────────────────────────────────────────────── */}
       <div style={s.card}>
-        <p style={s.sectionLabel}>The Aura Farmers Chronicle</p>
+        <p style={s.sectionLabel}>🌽 The Aura Farmers Chronicle</p>
         {debriefNarrative ? (
           <p style={s.summaryText}>{debriefNarrative}</p>
         ) : (

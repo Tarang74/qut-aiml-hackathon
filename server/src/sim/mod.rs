@@ -208,9 +208,8 @@ pub async fn run_loop(
         } = &msg
         {
             tracing::info!("Host started the game");
-            world.paused = true;
-            broadcast_msg(&broadcast_tx, &ServerMsg::GamePaused {});
-            upsert_snapshot_pause_state(snapshot.as_ref(), true, 0);
+            world.paused = false;
+            upsert_snapshot_pause_state(snapshot.as_ref(), false, world.cycle_duration_secs);
             break 'lobby;
         }
         let reset = handle_inbound(&mut world, msg, &broadcast_tx, &snapshot);

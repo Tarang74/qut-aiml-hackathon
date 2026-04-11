@@ -14,6 +14,70 @@ import type { PlayerAction } from "../ws/protocol";
 
 type Tab = "farm" | "market" | "options" | "chaos" | "god";
 
+function formatCompactNumber(value: number): string {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1_000_000) {
+    const scaled = abs / 1_000_000;
+    return `${sign}${scaled >= 10 ? scaled.toFixed(0) : scaled.toFixed(1)}M`;
+  }
+  if (abs >= 1_000) {
+    const scaled = abs / 1_000;
+    return `${sign}${scaled >= 10 ? scaled.toFixed(0) : scaled.toFixed(1)}k`;
+  }
+  return `${sign}${abs.toFixed(0)}`;
+}
+
+function formatCompactMoney(value: number): string {
+  return `$${formatCompactNumber(value)}`;
+}
+
+function normalCdf(x: number): number {
+  // Abramowitz-Stegun approximation (accurate enough for UI quotes).
+  const sign = x < 0 ? -1 : 1;
+  const z = Math.abs(x) / Math.sqrt(2);
+  const t = 1 / (1 + 0.3275911 * z);
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const erf =
+    1 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-z * z);
+  return 0.5 * (1 + sign * erf);
+}
+
+function bsPrice(
+  optionType: "call" | "put",
+  spot: number,
+  strike: number,
+  yearsToExpiry: number,
+  riskFreeRate: number,
+  sigma: number,
+): number {
+  if (spot <= 0 || strike <= 0 || yearsToExpiry <= 0 || sigma <= 0) {
+    return Math.max(0, optionType === "call" ? spot - strike : strike - spot);
+  }
+
+  const sqrtT = Math.sqrt(yearsToExpiry);
+  const d1 =
+    (Math.log(spot / strike) +
+      (riskFreeRate + 0.5 * sigma * sigma) * yearsToExpiry) /
+    (sigma * sqrtT);
+  const d2 = d1 - sigma * sqrtT;
+
+  if (optionType === "call") {
+    return (
+      spot * normalCdf(d1) -
+      strike * Math.exp(-riskFreeRate * yearsToExpiry) * normalCdf(d2)
+    );
+  }
+  return (
+    strike * Math.exp(-riskFreeRate * yearsToExpiry) * normalCdf(-d2) -
+    spot * normalCdf(-d1)
+  );
+}
+
 export default function GameScreen() {
   const state = useGameState();
   const send = useWsSend();
@@ -23,11 +87,16 @@ export default function GameScreen() {
 
   const [tab, setTab] = useState<Tab>(isFarmer ? "farm" : "market");
   // pending: action selected but not yet sent; locked: action committed this cycle
-  const [pending, setPending] = useState<{ action: PlayerAction; label: string } | null>(null);
+  const [pending, setPending] = useState<{
+    action: PlayerAction;
+    label: string;
+  } | null>(null);
+  const [lastCommitted, setLastCommitted] = useState<{
+    action: PlayerAction;
+    label: string;
+  } | null>(null);
   const [locked, setLocked] = useState(false);
-  // Auto-show help to first-time players (once per browser session)
-  const firstVisit = typeof sessionStorage !== "undefined" && !sessionStorage.getItem("aura_help_seen");
-  const [showHelp, setShowHelp] = useState(firstVisit);
+  const [showHelp, setShowHelp] = useState(false);
 
   function closeHelp() {
     sessionStorage.setItem("aura_help_seen", "1");
@@ -61,7 +130,21 @@ export default function GameScreen() {
     if (locked) return;
     if (pending) {
       send({ type: "action", action: pending.action });
+      setLastCommitted(pending);
     } else {
+      send({ type: "action", action: { kind: "no_op" } });
+    }
+    setLocked(true);
+  }
+
+  function repeatLastAction() {
+    if (locked || !isDecision || !lastCommitted) return;
+    const canRepeat = isActionRepeatable(lastCommitted.action, state);
+    if (canRepeat) {
+      send({ type: "action", action: lastCommitted.action });
+      setPending(lastCommitted);
+    } else {
+      setPending(null);
       send({ type: "action", action: { kind: "no_op" } });
     }
     setLocked(true);
@@ -76,7 +159,17 @@ export default function GameScreen() {
 
   const isDecision = state.phase === "decision";
   const canAct = isDecision && !locked;
-  const price = parseFloat(state.price);
+  const cashNum = parseFloat(state.myCash);
+  const netWorthNum = parseFloat(state.myNetWorth);
+
+  // Mobile safety net: if time is about to expire, commit the selected action.
+  useEffect(() => {
+    if (!isDecision || locked || state.paused || !pending) return;
+    if (state.secondsRemaining > 1) return;
+    send({ type: "action", action: pending.action });
+    setLastCommitted(pending);
+    setLocked(true);
+  }, [isDecision, locked, pending, send, state.paused, state.secondsRemaining]);
 
   const tabs: Array<{ id: Tab; label: string }> = [
     ...(isFarmer ? [{ id: "farm" as Tab, label: "Farm" }] : []),
@@ -92,35 +185,78 @@ export default function GameScreen() {
       <div style={s.topBar}>
         <div style={s.topBarLeft}>
           <span style={s.priceLabel}>Aura</span>
-          <span style={{ ...s.priceValue, color: "#7a5010" }}>{state.myAura.toFixed(0)}</span>
+          <span style={{ ...s.priceValue, color: "#7a5010" }}>
+            {state.myAura.toFixed(0)}
+          </span>
         </div>
         <div style={s.topBarCenter}>
-          <span style={s.priceLabel}>CornCo</span>
-          <span style={s.priceValue}>${price.toFixed(2)}</span>
+          <div style={s.topBarMidStats}>
+            <div style={s.topBarMidStat}>
+              <span style={s.priceLabel}>Cash</span>
+              <span style={s.topBarMidValue}>
+                {formatCompactMoney(cashNum)}
+              </span>
+            </div>
+            <span style={s.topBarMidDivider} />
+            <div style={s.topBarMidStat}>
+              <span style={s.priceLabel}>Net Worth</span>
+              <span style={s.topBarMidValue}>
+                {formatCompactMoney(netWorthNum)}
+              </span>
+            </div>
+          </div>
         </div>
         <div style={s.topBarRight}>
-          <button style={s.helpBtn} onClick={() => setShowHelp(true)}>?</button>
-          <button style={s.leaveBtn} onClick={leaveGame} title="Leave game">✕</button>
+          <button style={s.helpBtn} onClick={() => setShowHelp(true)}>
+            ?
+          </button>
+          <button style={s.leaveBtn} onClick={leaveGame} title="Leave game">
+            ✕
+          </button>
         </div>
       </div>
 
       {/* ── Queued action banner — only shown when there's something to say ── */}
       {!state.paused && (locked || !isDecision) && (
-        <div style={{
-          ...s.countdownBar,
-          ...(locked ? { background: "#e0f5e0", borderColor: "#9ac89a" }
-            : { background: "#f8f4e0", borderColor: "#c8b060" }),
-        }}>
+        <div
+          style={{
+            ...s.countdownBar,
+            ...(locked
+              ? { background: "#e0f5e0", borderColor: "#9ac89a" }
+              : { background: "#f8f4e0", borderColor: "#c8b060" }),
+          }}
+        >
           {isDecision && locked && (
             <>
-              <span style={{ ...s.countdownNum, color: "#1d6b1d", fontSize: "1.3rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: "70%", minWidth: 0 }}>
+              <span
+                style={{
+                  ...s.countdownNum,
+                  color: "#1d6b1d",
+                  fontSize: "1.3rem",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap" as const,
+                  maxWidth: "70%",
+                  minWidth: 0,
+                }}
+              >
                 ✓ {pending ? pending.label : "No action"}
               </span>
-              <span style={{ ...s.countdownLabel, color: "#9a9a90", flexShrink: 0 }}>waiting…</span>
+              <span
+                style={{ ...s.countdownLabel, color: "#9a9a90", flexShrink: 0 }}
+              >
+                waiting…
+              </span>
             </>
           )}
           {!isDecision && (
-            <span style={{ ...s.countdownNum, color: "#7a5010", fontSize: "1.4rem" }}>
+            <span
+              style={{
+                ...s.countdownNum,
+                color: "#7a5010",
+                fontSize: "1.4rem",
+              }}
+            >
               Resolving cycle {state.cycle}…
             </span>
           )}
@@ -144,44 +280,71 @@ export default function GameScreen() {
       <div style={s.content}>
         <TabTip tab={tab} isFarmer={isFarmer} />
         {tab === "farm" && isFarmer && (
-          <FarmTab act={selectAction} canAct={canAct} pendingLabel={pending?.label ?? null} />
+          <FarmTab
+            act={selectAction}
+            canAct={canAct}
+            pendingLabel={pending?.label ?? null}
+          />
         )}
         {tab === "market" && (
-          <MarketTab act={selectAction} canAct={canAct} pendingLabel={pending?.label ?? null} />
+          <MarketTab
+            act={selectAction}
+            canAct={canAct}
+            pendingLabel={pending?.label ?? null}
+          />
         )}
         {tab === "options" && (
-          <OptionsTab act={selectAction} canAct={canAct} pendingLabel={pending?.label ?? null} />
+          <OptionsTab
+            act={selectAction}
+            canAct={canAct}
+            pendingLabel={pending?.label ?? null}
+          />
         )}
         {tab === "chaos" && (
-          <ChaosTab act={selectAction} canAct={canAct} pendingLabel={pending?.label ?? null} />
+          <ChaosTab
+            act={selectAction}
+            canAct={canAct}
+            pendingLabel={pending?.label ?? null}
+          />
         )}
         {tab === "god" && (
-          <GodTab act={selectAction} canAct={canAct} pendingLabel={pending?.label ?? null} />
+          <GodTab
+            act={selectAction}
+            canAct={canAct}
+            pendingLabel={pending?.label ?? null}
+          />
         )}
 
         {state.myFeedback && (
           <div style={s.feedbackCard}>
             <div style={s.feedbackHeader}>
               <span style={s.feedbackTitle}>Coach</span>
-              <button style={s.dismissBtn} onClick={() => dispatch({ type: "clear_feedback" })}>
+              <button
+                style={s.dismissBtn}
+                onClick={() => dispatch({ type: "clear_feedback" })}
+              >
                 ×
               </button>
             </div>
-            {state.myFeedback.split(/\n/).filter(Boolean).map((line, i) => (
-              <p key={i} style={s.feedbackLine}>{line.trim()}</p>
-            ))}
+            {state.myFeedback
+              .split(/\n/)
+              .filter(Boolean)
+              .map((line, i) => (
+                <p key={i} style={s.feedbackLine}>
+                  {line.trim()}
+                </p>
+              ))}
           </div>
         )}
 
         {state.headlines.length > 0 && (
           <div style={s.headlineCard}>
             <span style={s.headlineLabel}>HEADLINE</span>
-            <p style={s.headlineText}>{state.headlines[state.headlines.length - 1].text}</p>
+            <p style={s.headlineText}>
+              {state.headlines[state.headlines.length - 1].text}
+            </p>
           </div>
         )}
-
-        {/* spacer so content isn't hidden behind sticky bottom bar */}
-        <div style={{ height: "5rem" }} />
       </div>
 
       {/* ── Lock-in bottom bar ───────────────────────────────────────────── */}
@@ -191,9 +354,21 @@ export default function GameScreen() {
           55%       { box-shadow: 0 0 0 7px rgba(29,107,29,0); }
         }
       `}</style>
-      <div style={{ ...s.lockBar, ...(!isDecision ? { opacity: 0.35, pointerEvents: "none" as const } : {}) }}>
+      <div
+        style={{
+          ...s.lockBar,
+          ...(!isDecision
+            ? { opacity: 0.35, pointerEvents: "none" as const }
+            : {}),
+        }}
+      >
         <button
-          style={{ ...s.lockBtn, ...s.noActionBtn, opacity: locked ? 0.4 : 1, cursor: locked ? "not-allowed" : "pointer" }}
+          style={{
+            ...s.lockBtn,
+            ...s.noActionBtn,
+            opacity: locked ? 0.4 : 1,
+            cursor: locked ? "not-allowed" : "pointer",
+          }}
           disabled={locked || !isDecision}
           onClick={takeNoAction}
         >
@@ -202,42 +377,182 @@ export default function GameScreen() {
         <button
           style={{
             ...s.lockBtn,
+            ...s.repeatBtn,
+            opacity: locked || !lastCommitted ? 0.45 : 1,
+            cursor: locked || !lastCommitted ? "not-allowed" : "pointer",
+          }}
+          disabled={locked || !isDecision || !lastCommitted}
+          onClick={repeatLastAction}
+          title={
+            lastCommitted
+              ? `Repeat: ${lastCommitted.label}`
+              : "No previous action"
+          }
+        >
+          Repeat Last
+        </button>
+        <button
+          style={{
+            ...s.lockBtn,
             opacity: locked ? 0.5 : 1,
             cursor: locked ? "not-allowed" : "pointer",
             background: locked ? "#e8e4df" : pending ? "#1d6b1d" : "#e8eff5",
             borderColor: locked ? "#c8c4be" : pending ? "#155215" : "#5a8ab0",
-            color: pending && !locked ? "#ffffff" : locked ? "#8a8a80" : "#18181a",
-            animation: pending && !locked ? "lock-pulse 1.5s ease-in-out infinite" : "none",
+            color:
+              pending && !locked ? "#ffffff" : locked ? "#8a8a80" : "#18181a",
+            animation:
+              pending && !locked
+                ? "lock-pulse 1.5s ease-in-out infinite"
+                : "none",
           }}
           disabled={locked || !isDecision}
           onClick={lockIn}
         >
-          {locked ? "✓ Locked In" : pending ? `✓ Lock In: ${pending.label}` : "Lock In"}
+          {locked
+            ? "✓ Locked In"
+            : pending
+              ? `✓ Lock In: ${pending.label}`
+              : "Lock In"}
         </button>
       </div>
 
       {/* ── How to Play modal ────────────────────────────────────────────── */}
-      {showHelp && (
-        <HowToPlayModal role={state.myRole} onClose={closeHelp} />
-      )}
+      {showHelp && <HowToPlayModal role={state.myRole} onClose={closeHelp} />}
     </div>
   );
+}
+
+function isActionRepeatable(
+  action: PlayerAction,
+  state: ReturnType<typeof useGameState>,
+): boolean {
+  const cash = parseFloat(state.myCash);
+  const aura = state.myAura;
+  const price = parseFloat(state.price);
+  const me = state.myPlayerId;
+  const myFarm = state.farms.find((f) => f.owner === me);
+
+  switch (action.kind) {
+    case "place_order":
+      return action.side === "bid"
+        ? cash >= price * action.quantity
+        : state.myShares >= action.quantity;
+    case "cancel_order":
+      return true;
+    case "plant_fields":
+      return Boolean(
+        myFarm &&
+        myFarm.id === action.farm_id &&
+        myFarm.fields > myFarm.planted_fields,
+      );
+    case "harvest_corn":
+      return Boolean(
+        myFarm &&
+        myFarm.id === action.farm_id &&
+        myFarm.planted_fields > 0 &&
+        myFarm.state === "healthy",
+      );
+    case "hire_worker":
+      return Boolean(myFarm && myFarm.id === action.farm_id && cash >= 500);
+    case "fire_worker":
+      return Boolean(
+        myFarm && myFarm.id === action.farm_id && myFarm.workers > 0,
+      );
+    case "sell_corn":
+      return Boolean(
+        myFarm && myFarm.id === action.farm_id && myFarm.stored_corn > 0,
+      );
+    case "operate_mill":
+      return state.mills.some(
+        (m) =>
+          m.id === action.mill_id && m.owner === me && m.state !== "burning",
+      );
+    case "buy_option":
+      return cash > 0;
+    case "write_option":
+      return true;
+    case "burn_farm":
+      return (
+        aura >= 200 &&
+        state.farms.some((f) => f.id === action.target_farm && f.owner !== me)
+      );
+    case "burn_mill":
+      return aura >= 250 && state.mills.some((m) => m.id === action.target_mill);
+    case "hitman_worker":
+      return (
+        aura >= 500 &&
+        state.farms.some((f) => f.id === action.target_farm && f.owner !== me)
+      );
+    case "hitman_owner":
+      return (
+        aura >= 750 &&
+        state.npcOwners.some((n) => n.id === action.target_npc && n.alive)
+      );
+    case "spread_rumor":
+      return aura >= 5 && action.text.trim().length > 0;
+    case "drought":
+      return aura >= 100;
+    case "famine":
+      return aura >= 500;
+    case "bumper_harvest":
+      return aura >= 50;
+    case "market_panic":
+      return aura >= 250;
+    case "nuclear_fallout":
+      return aura >= 1000;
+    case "acquire_farm":
+      return (
+        cash >= price * 15 &&
+        state.farms.some((f) => f.id === action.target_farm && f.owner !== me)
+      );
+    case "acquire_mill":
+      return (
+        cash >= price * 20 &&
+        state.mills.some((m) => m.id === action.target_mill)
+      );
+    case "dump_shares":
+      return state.myShares > 0;
+    case "corner_market":
+      return cash >= price * 10;
+    case "no_op":
+      return true;
+  }
 }
 
 // ── Per-tab contextual tip ────────────────────────────────────────────────────
 
 const TAB_TIPS: Record<string, { icon: string; text: string }> = {
-  farm:    { icon: "🌽", text: "Each cycle: Plant → Harvest → Sell. Hire workers to boost yield. Lock in before time runs out!" },
-  market:  { icon: "📈", text: "Buy low, sell high. Negative shares = short position. Watch Bid/Ask depth to sense price direction." },
-  options: { icon: "📊", text: "Buy a Call to profit if price rises. Buy a Put to profit if price falls. Writing an option earns cash upfront — but you owe the buyer if price moves against you." },
-  chaos:   { icon: "🔥", text: "Burn rivals' farms & mills to gut their income. Aura refills +10 every cycle — spend it wisely." },
-  god:     { icon: "⚡", text: "Save aura for game-changers. Nuclear Fallout ends the game immediately — coordinate for maximum impact." },
+  farm: {
+    icon: "🌽",
+    text: "Each cycle: Plant → Harvest → Sell. Hire workers to boost yield. Lock in before time runs out!",
+  },
+  market: {
+    icon: "📈",
+    text: "Buy low, sell high. Negative shares = short position. Watch Bid/Ask depth to sense price direction.",
+  },
+  options: {
+    icon: "📊",
+    text: "Buy a Call to profit if price rises. Buy a Put to profit if price falls. Writing an option earns cash upfront — but you owe the buyer if price moves against you.",
+  },
+  chaos: {
+    icon: "🔥",
+    text: "Burn rivals' farms & mills to gut their income. Aura refills +10 every cycle — spend it wisely.",
+  },
+  god: {
+    icon: "⚡",
+    text: "Save aura for game-changers. Nuclear Fallout ends the game immediately — coordinate for maximum impact.",
+  },
 };
 
 function TabTip({ tab, isFarmer }: { tab: Tab; isFarmer: boolean }) {
-  const [dismissed, setDismissed] = useState(false);
-  // reset dismiss when tab changes
-  useEffect(() => { setDismissed(false); }, [tab]);
+  const storageKey = `aura_tip_dismissed_${tab}`;
+  const [dismissed, setDismissed] = useState(
+    () => sessionStorage.getItem(storageKey) === "1",
+  );
+
+  useEffect(() => {
+    setDismissed(sessionStorage.getItem(storageKey) === "1");
+  }, [storageKey]);
 
   if (dismissed) return null;
   // farm tab tip only shown to farmers
@@ -245,53 +560,91 @@ function TabTip({ tab, isFarmer }: { tab: Tab; isFarmer: boolean }) {
   const tip = TAB_TIPS[tab];
   if (!tip) return null;
 
+  function dismissTip() {
+    sessionStorage.setItem(storageKey, "1");
+    setDismissed(true);
+  }
+
   return (
     <div style={s.tipCard}>
       <span style={s.tipIcon}>{tip.icon}</span>
       <span style={s.tipText}>{tip.text}</span>
-      <button style={s.tipDismiss} onClick={() => setDismissed(true)}>×</button>
+      <button style={s.tipDismiss} onClick={dismissTip}>
+        ×
+      </button>
     </div>
   );
 }
 
 // ── How to Play modal ──────────────────────────────────────────────────────────
 
-function HowToPlayModal({ role, onClose }: { role: string | null; onClose: () => void }) {
+function HowToPlayModal({
+  role,
+  onClose,
+}: {
+  role: string | null;
+  onClose: () => void;
+}) {
   const isFarmer = role === "farmer";
   return (
     <div style={s.overlay} onClick={onClose}>
       <div style={s.modal} onClick={(e) => e.stopPropagation()}>
         <div style={s.modalHeader}>
           <span style={s.modalTitle}>How to Play</span>
-          <button style={s.modalClose} onClick={onClose}>×</button>
+          <button style={s.modalClose} onClick={onClose}>
+            ×
+          </button>
         </div>
         <div style={s.modalBody}>
           <div style={s.modalSection}>
             <p style={s.modalSectionTitle}>🏆 Goal</p>
-            <p style={s.modalText}>Finish with the highest net worth. Net worth = cash + share value + farm equity + options P&L.</p>
+            <p style={s.modalText}>
+              Finish with the highest net worth. Net worth = cash + share value
+              + farm equity + options P&L.
+            </p>
           </div>
           {isFarmer ? (
             <div style={s.modalSection}>
               <p style={s.modalSectionTitle}>🌽 You are a Farmer</p>
-              <p style={s.modalText}>Plant fields → harvest corn → sell through mills. Hire workers to boost output. Acquire more farms to scale up. Use options to hedge your harvest price against market moves.</p>
+              <p style={s.modalText}>
+                Plant fields → harvest corn → sell through mills. Hire workers
+                to boost output. Acquire more farms to scale up. Use options to
+                hedge your harvest price against market moves.
+              </p>
             </div>
           ) : (
             <div style={s.modalSection}>
               <p style={s.modalSectionTitle}>📈 You are a Trader</p>
-              <p style={s.modalText}>Buy and sell CornCo stock. Go long when supply looks tight, short when there's a glut. Sell options to collect premium. Corner the market or dump shares to move the price.</p>
+              <p style={s.modalText}>
+                Buy and sell CornCo stock. Go long when supply looks tight,
+                short when there's a glut. Sell options to collect premium.
+                Corner the market or dump shares to move the price.
+              </p>
             </div>
           )}
           <div style={s.modalSection}>
             <p style={s.modalSectionTitle}>🔥 Chaos Actions</p>
-            <p style={s.modalText}>Burn farms &amp; mills, send hitmen, spread rumors. Each costs Aura. Use chaos to destabilise rivals or manipulate the market.</p>
+            <p style={s.modalText}>
+              Burn farms &amp; mills, send hitmen, spread rumors. Each costs
+              Aura. Use chaos to destabilise rivals or manipulate the market.
+            </p>
           </div>
           <div style={s.modalSection}>
             <p style={s.modalSectionTitle}>✨ Aura &amp; God Powers</p>
-            <p style={s.modalText}>Aura accumulates +10 each cycle automatically. Save it for god-tier events: Drought (80), Market Panic (100), Famine (150), or Nuclear Fallout (300) to end the game in chaos.</p>
+            <p style={s.modalText}>
+              Aura accumulates +10 each cycle. Every 5 cycles, leaderboard
+              bonuses apply: top 1-5 earn +50, +40, +30, +25, +20 aura. Save
+              it for god-tier events: Drought (100), Market Panic (250),
+              Famine (500), or Nuclear Fallout (1000) to end the game in chaos.
+            </p>
           </div>
           <div style={s.modalSection}>
             <p style={s.modalSectionTitle}>🔒 Lock In</p>
-            <p style={s.modalText}>Select any action on a tab, then press Lock In. The cycle resolves immediately once everyone locks in. Press Take No Action to pass and preserve your Aura.</p>
+            <p style={s.modalText}>
+              Select any action on a tab, then press Lock In. The cycle resolves
+              immediately once everyone locks in. Press Take No Action to pass
+              and preserve your Aura.
+            </p>
           </div>
         </div>
       </div>
@@ -302,7 +655,9 @@ function HowToPlayModal({ role, onClose }: { role: string | null; onClose: () =>
 // ── Farm tab ──────────────────────────────────────────────────────────────────
 
 function FarmTab({
-  act, canAct, pendingLabel,
+  act,
+  canAct,
+  pendingLabel,
 }: {
   act: (a: PlayerAction, label: string) => void;
   canAct: boolean;
@@ -313,7 +668,11 @@ function FarmTab({
   const cash = parseFloat(state.myCash);
 
   if (!farm) {
-    return <div style={s.card}><p style={s.empty}>No farm assigned.</p></div>;
+    return (
+      <div style={s.card}>
+        <p style={s.empty}>No farm assigned.</p>
+      </div>
+    );
   }
 
   const unplanted = farm.fields - farm.planted_fields;
@@ -324,33 +683,83 @@ function FarmTab({
     <>
       <div style={s.card}>
         <div style={s.statGrid}>
-          <Stat label="Planted" value={`${farm.planted_fields}/${farm.fields}`} />
+          <Stat
+            label="Planted"
+            value={`${farm.planted_fields}/${farm.fields}`}
+          />
           <Stat label="Stored corn" value={String(farm.stored_corn)} />
           <Stat label="Workers" value={String(farm.workers)} />
-          <Stat label="Farm state" value={farm.state} color={farm.state === "burning" ? "#7a1a1a" : farm.state === "idle" ? "#9a9a90" : "#1d6b1d"} />
+          <Stat
+            label="Farm state"
+            value={farm.state}
+            color={
+              farm.state === "burning"
+                ? "#7a1a1a"
+                : farm.state === "idle"
+                  ? "#9a9a90"
+                  : "#1d6b1d"
+            }
+          />
           <Stat label="Cash" value={`$${cash.toFixed(0)}`} />
-          <Stat label="Net worth" value={`$${parseFloat(state.myNetWorth).toFixed(0)}`} />
+          <Stat
+            label="Net worth"
+            value={`$${parseFloat(state.myNetWorth).toFixed(0)}`}
+          />
         </div>
       </div>
       <div style={s.card}>
         <p style={s.cardTitle}>Select action (confirm with Lock In)</p>
         <div style={s.btnGrid}>
-          <ActionBtn label="Plant Fields" sub={`${unplanted} available`}
-            disabled={!canAct || unplanted === 0} selected={pendingLabel === "Plant Fields"}
-            onClick={() => act({ kind: "plant_fields", farm_id: farm.id, count: unplanted }, "Plant Fields")} />
-          <ActionBtn label="Harvest Corn" sub={canHarvest ? `${farm.planted_fields} fields` : "nothing ready"}
-            disabled={!canAct || !canHarvest} selected={pendingLabel === "Harvest Corn"}
-            onClick={() => act({ kind: "harvest_corn", farm_id: farm.id }, "Harvest Corn")} />
-          <ActionBtn label="Sell Corn" sub={canSell ? `${farm.stored_corn} bushels` : "barn empty"}
-            disabled={!canAct || !canSell} selected={pendingLabel === "Sell Corn"}
-            onClick={() => act({ kind: "sell_corn", farm_id: farm.id }, "Sell Corn")} />
-          <ActionBtn label="Hire Worker" sub={cash >= 500 ? "costs $500" : "need $500"}
-            disabled={!canAct || cash < 500} selected={pendingLabel === "Hire Worker"}
-            onClick={() => act({ kind: "hire_worker", farm_id: farm.id }, "Hire Worker")} />
-          <ActionBtn label="Fire Worker" sub={farm.workers > 0 ? `${farm.workers} workers` : "no workers"}
-            disabled={!canAct || farm.workers === 0} selected={pendingLabel === "Fire Worker"}
-            color="#f5e8e8" borderColor="#aa5a5a"
-            onClick={() => act({ kind: "fire_worker", farm_id: farm.id }, "Fire Worker")} />
+          <ActionBtn
+            label="Plant Fields"
+            sub={`${unplanted} available`}
+            disabled={!canAct || unplanted === 0}
+            selected={pendingLabel === "Plant Fields"}
+            onClick={() =>
+              act(
+                { kind: "plant_fields", farm_id: farm.id, count: unplanted },
+                "Plant Fields",
+              )
+            }
+          />
+          <ActionBtn
+            label="Harvest Corn"
+            sub={canHarvest ? `${farm.planted_fields} fields` : "nothing ready"}
+            disabled={!canAct || !canHarvest}
+            selected={pendingLabel === "Harvest Corn"}
+            onClick={() =>
+              act({ kind: "harvest_corn", farm_id: farm.id }, "Harvest Corn")
+            }
+          />
+          <ActionBtn
+            label="Sell Corn"
+            sub={canSell ? `${farm.stored_corn} bushels` : "barn empty"}
+            disabled={!canAct || !canSell}
+            selected={pendingLabel === "Sell Corn"}
+            onClick={() =>
+              act({ kind: "sell_corn", farm_id: farm.id }, "Sell Corn")
+            }
+          />
+          <ActionBtn
+            label="Hire Worker"
+            sub={cash >= 500 ? "costs $500" : "need $500"}
+            disabled={!canAct || cash < 500}
+            selected={pendingLabel === "Hire Worker"}
+            onClick={() =>
+              act({ kind: "hire_worker", farm_id: farm.id }, "Hire Worker")
+            }
+          />
+          <ActionBtn
+            label="Fire Worker"
+            sub={farm.workers > 0 ? `${farm.workers} workers` : "no workers"}
+            disabled={!canAct || farm.workers === 0}
+            selected={pendingLabel === "Fire Worker"}
+            color="#f5e8e8"
+            borderColor="#aa5a5a"
+            onClick={() =>
+              act({ kind: "fire_worker", farm_id: farm.id }, "Fire Worker")
+            }
+          />
         </div>
       </div>
     </>
@@ -360,7 +769,9 @@ function FarmTab({
 // ── Market tab ────────────────────────────────────────────────────────────────
 
 function MarketTab({
-  act, canAct, pendingLabel,
+  act,
+  canAct,
+  pendingLabel,
 }: {
   act: (a: PlayerAction, label: string) => void;
   canAct: boolean;
@@ -370,6 +781,17 @@ function MarketTab({
   const [qty, setQty] = useState(1);
   const cash = parseFloat(state.myCash);
   const price = parseFloat(state.price);
+  const history = state.priceHistory
+    .map(parseFloat)
+    .filter((n) => Number.isFinite(n));
+  const prev1 = history.length >= 2 ? history[history.length - 2] : price;
+  const prev5 =
+    history.length >= 6 ? history[history.length - 6] : (history[0] ?? price);
+  const move1Pct = prev1 !== 0 ? ((price - prev1) / prev1) * 100 : 0;
+  const move5Pct = prev5 !== 0 ? ((price - prev5) / prev5) * 100 : 0;
+  const positionValue = state.myShares * price;
+  const exposure =
+    state.myShares === 0 ? "Flat" : state.myShares > 0 ? "Long" : "Short";
   const isFarmer = state.myRole === "farmer";
 
   const canBuy = cash >= price * qty;
@@ -380,45 +802,110 @@ function MarketTab({
     <>
       <div style={s.card}>
         <div style={s.statGrid}>
-          <Stat label="Cash" value={`$${cash.toFixed(0)}`} />
-          <Stat label="Shares" value={String(state.myShares)} color={state.myShares < 0 ? "#7a1a1a" : undefined} />
-          <Stat label="Net worth" value={`$${parseFloat(state.myNetWorth).toFixed(0)}`} />
-          <Stat label="Vol (cycle)" value={String(state.cycleVolume)} />
-          <Stat label="Bid depth" value={String(state.bidDepth)} />
-          <Stat label="Ask depth" value={String(state.askDepth)} />
+          <Stat
+            label="Shares"
+            value={String(state.myShares)}
+            color={state.myShares < 0 ? "#7a1a1a" : undefined}
+          />
+          <Stat
+            label="Position"
+            value={formatCompactMoney(positionValue)}
+            color={positionValue < 0 ? "#7a1a1a" : undefined}
+          />
+          <Stat
+            label="Exposure"
+            value={exposure}
+            color={
+              exposure === "Short"
+                ? "#7a1a1a"
+                : exposure === "Long"
+                  ? "#1d6b1d"
+                  : "#6b6b63"
+            }
+          />
+          <Stat label="Volume this cycle" value={String(state.cycleVolume)} />
+          <Stat
+            label="% move over 1 cycle"
+            value={`${move1Pct >= 0 ? "+" : ""}${move1Pct.toFixed(1)}%`}
+            color={move1Pct < 0 ? "#7a1a1a" : "#1d6b1d"}
+          />
+          <Stat
+            label="% move over 5 cycles"
+            value={`${move5Pct >= 0 ? "+" : ""}${move5Pct.toFixed(1)}%`}
+            color={move5Pct < 0 ? "#7a1a1a" : "#1d6b1d"}
+          />
         </div>
       </div>
       <div style={s.card}>
-        <p style={s.cardTitle}>Quantity — <strong>{qty}</strong></p>
-        <input type="range" min={1} max={20} value={qty}
+        <p style={s.cardTitle}>
+          Quantity — <strong>{qty}</strong>
+        </p>
+        <input
+          type="range"
+          min={1}
+          max={20}
+          value={qty}
           onChange={(e) => setQty(Number(e.target.value))}
-          style={s.qtySlider} />
+          style={s.qtySlider}
+        />
       </div>
       <div style={s.card}>
         <p style={s.cardTitle}>Orders</p>
         <div style={s.btnGrid}>
-          <ActionBtn label={`Buy ${qty}`} sub={canBuy ? `~$${(price * qty).toFixed(0)}` : "not enough cash"}
-            disabled={!canAct || !canBuy} color="#e8f5e8" borderColor="#5aaa5a"
+          <ActionBtn
+            label={`Buy ${qty}`}
+            sub={canBuy ? `~$${(price * qty).toFixed(0)}` : "not enough cash"}
+            disabled={!canAct || !canBuy}
+            color="#e8f5e8"
+            borderColor="#5aaa5a"
             selected={pendingLabel === `Buy ${qty} shares`}
-            onClick={() => act({ kind: "place_order", side: "bid", quantity: qty }, `Buy ${qty} shares`)} />
-          <ActionBtn label={`Sell ${qty}`} sub={canSell ? `${state.myShares} held` : "not enough shares"}
-            disabled={!canAct || !canSell} color="#f5e8e8" borderColor="#aa5a5a"
+            onClick={() =>
+              act(
+                { kind: "place_order", side: "bid", quantity: qty },
+                `Buy ${qty} shares`,
+              )
+            }
+          />
+          <ActionBtn
+            label={`Sell ${qty}`}
+            sub={canSell ? `${state.myShares} held` : "not enough shares"}
+            disabled={!canAct || !canSell}
+            color="#f5e8e8"
+            borderColor="#aa5a5a"
             selected={pendingLabel === `Sell ${qty} shares`}
-            onClick={() => act({ kind: "place_order", side: "ask", quantity: qty }, `Sell ${qty} shares`)} />
+            onClick={() =>
+              act(
+                { kind: "place_order", side: "ask", quantity: qty },
+                `Sell ${qty} shares`,
+              )
+            }
+          />
         </div>
       </div>
       {!isFarmer && (
         <div style={s.card}>
           <p style={s.cardTitle}>Power Moves</p>
           <div style={s.btnGrid}>
-            <ActionBtn label="Dump All" sub={canDump ? `sell ${state.myShares} @ market` : "no shares held"}
-              disabled={!canAct || !canDump} color="#f5e8e8" borderColor="#aa5a5a"
-              selected={pendingLabel === "Dump All Shares"}
-              onClick={() => act({ kind: "dump_shares" }, "Dump All Shares")} />
-            <ActionBtn label="Corner Market" sub="buy 200 shares @ market"
-              disabled={!canAct || cash < price * 10} color="#eeeef8" borderColor="#5a5aaa"
+            <ActionBtn
+              label="Corner Market"
+              sub="buy 200 shares"
+              disabled={!canAct || cash < price * 10}
+              color="#eeeef8"
+              borderColor="#5a5aaa"
               selected={pendingLabel === "Corner Market"}
-              onClick={() => act({ kind: "corner_market" }, "Corner Market")} />
+              onClick={() => act({ kind: "corner_market" }, "Corner Market")}
+            />
+            <ActionBtn
+              label="Dump All"
+              sub={
+                canDump ? `sell ${state.myShares} @ market` : "no shares held"
+              }
+              disabled={!canAct || !canDump}
+              color="#f5e8e8"
+              borderColor="#aa5a5a"
+              selected={pendingLabel === "Dump All Shares"}
+              onClick={() => act({ kind: "dump_shares" }, "Dump All Shares")}
+            />
           </div>
         </div>
       )}
@@ -432,7 +919,9 @@ function MarketTab({
 const OPT_EXPIRY = 3;
 
 function OptionsTab({
-  act, canAct, pendingLabel,
+  act,
+  canAct,
+  pendingLabel,
 }: {
   act: (a: PlayerAction, label: string) => void;
   canAct: boolean;
@@ -442,7 +931,45 @@ function OptionsTab({
   const price = parseFloat(state.price);
   const [strikeOffset, setStrikeOffset] = useState(0);
   const strike = (price * (1 + strikeOffset / 100)).toFixed(2);
-  const strikeLabels: Record<number, string> = { [-10]: "−10% below", 0: "At price", 10: "+10% above" };
+  const strikeNum = Number.parseFloat(strike);
+  const series = state.priceHistory
+    .map(parseFloat)
+    .filter((n) => Number.isFinite(n));
+  const returns = series.slice(1).map((p, i) => {
+    const prior = series[i];
+    return prior !== 0 ? (p - prior) / prior : 0;
+  });
+  const mean = returns.length
+    ? returns.reduce((sum, value) => sum + value, 0) / returns.length
+    : 0;
+  const variance = returns.length
+    ? returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
+      returns.length
+    : 0;
+  // Match server behavior by enforcing a floor so quotes aren't unrealistically cheap.
+  const sigma = Math.max(Math.sqrt(variance), 0.1);
+  const yearsToExpiry = OPT_EXPIRY / 10;
+  const estCallPremium = bsPrice(
+    "call",
+    price,
+    Number.isFinite(strikeNum) ? strikeNum : price,
+    yearsToExpiry,
+    0.05,
+    sigma,
+  );
+  const estPutPremium = bsPrice(
+    "put",
+    price,
+    Number.isFinite(strikeNum) ? strikeNum : price,
+    yearsToExpiry,
+    0.05,
+    sigma,
+  );
+  const strikeLabels: Record<number, string> = {
+    [-10]: "−10% below",
+    0: "At price",
+    10: "+10% above",
+  };
 
   function optStyle(baseStyle: object, actLabel: string) {
     const isSelected = pendingLabel === actLabel;
@@ -450,55 +977,107 @@ function OptionsTab({
     return {
       ...s.optBtn,
       ...(isDisabled ? s.optBtnDisabled : baseStyle),
-      ...(isSelected ? {
-        borderColor: "#1d6b1d",
-        borderWidth: "2.5px",
-        boxShadow: "0 0 0 3px rgba(29,107,29,0.12)",
-      } : {}),
+      ...(isSelected
+        ? {
+            borderColor: "#1d6b1d",
+            borderWidth: "2.5px",
+            boxShadow: "0 0 0 3px rgba(29,107,29,0.12)",
+          }
+        : {}),
     };
   }
 
   return (
     <>
       <div style={s.card}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.6rem" }}>
-          <div>
-            <div style={s.statLabel}>Current price</div>
-            <div style={{ ...s.statValue, fontSize: "1.4rem", fontWeight: "800" as const, color: "#1d6b1d" }}>${price.toFixed(2)}</div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+            gap: "0.75rem",
+            marginBottom: "0.6rem",
+          }}
+        >
+          <div style={{ textAlign: "left" as const }}>
+            <div style={s.statLabel}>Strike price</div>
+            <div style={{ ...s.statValue, color: "#6b6b63" }}>${strike}</div>
           </div>
-          <div style={{ textAlign: "right" as const }}>
-            <div style={s.statLabel}>Strike price · expires in</div>
-            <div style={{ ...s.statValue, color: "#6b6b63" }}>${strike} · {OPT_EXPIRY} cycles</div>
+          <div style={{ textAlign: "right" as const, marginLeft: "auto" }}>
+            <div style={s.statLabel}>Expires in</div>
+            <div style={{ ...s.statValue, color: "#6b6b63" }}>
+              {OPT_EXPIRY} cycles
+            </div>
           </div>
         </div>
         <div style={{ display: "flex", gap: "0.4rem" }}>
           {[-10, 0, 10].map((o) => (
-            <button key={o}
-              style={{ ...s.qtyBtn, flex: 1, ...(strikeOffset === o ? s.qtyBtnActive : {}), fontSize: "0.78rem" }}
+            <button
+              key={o}
+              style={{
+                ...s.qtyBtn,
+                flex: 1,
+                ...(strikeOffset === o ? s.qtyBtnActive : {}),
+                fontSize: "0.78rem",
+              }}
               onClick={() => setStrikeOffset(o)}
-            >{strikeLabels[o]}</button>
+            >
+              {strikeLabels[o]}
+            </button>
           ))}
         </div>
       </div>
 
       <div style={s.card}>
-        <p style={s.cardTitle}>Buy an option — pay a small premium now, profit if you're right</p>
+        <p style={s.cardTitle}>
+          Buy options (pay premium):
+          <br />
+          Call -${estCallPremium.toFixed(2)} | Put -${estPutPremium.toFixed(2)}
+        </p>
         <div style={s.btnGrid}>
           {(["call", "put"] as const).map((type) => {
-            const actLabel = type === "call" ? `Buy Call @ $${strike}` : `Buy Put @ $${strike}`;
+            const actLabel =
+              type === "call" ? "Open Call Contract" : "Open Put Contract";
             const isSelected = pendingLabel === actLabel;
             return (
-              <button key={type}
-                style={optStyle(type === "call" ? s.optBtnCall : s.optBtnPut, actLabel)}
+              <button
+                key={type}
+                style={optStyle(
+                  type === "call" ? s.optBtnCall : s.optBtnPut,
+                  actLabel,
+                )}
                 disabled={!canAct}
-                onClick={() => act({ kind: "buy_option", option_type: type, strike, expiry_cycles: OPT_EXPIRY, quantity: 1 }, actLabel)}
+                onClick={() =>
+                  act(
+                    {
+                      kind: "buy_option",
+                      option_type: type,
+                      strike,
+                      expiry_cycles: OPT_EXPIRY,
+                      quantity: 1,
+                    },
+                    actLabel,
+                  )
+                }
               >
-                <span style={s.optEmoji}>{isSelected ? "✓" : type === "call" ? "📈" : "📉"}</span>
-                <span style={{ ...s.optLabel, color: isSelected ? "#155215" : "#18181a" }}>
-                  {isSelected ? `${type === "call" ? "Buy Call" : "Buy Put"}` : type === "call" ? "Buy Call" : "Buy Put"}
+                <span style={s.optEmoji}>
+                  {isSelected ? "✓" : type === "call" ? "📈" : "📉"}
                 </span>
-                <span style={s.optDesc}>{type === "call" ? "you win if price goes up" : "you win if price goes down"}</span>
-                <span style={s.optMeta}>trigger at ${strike}</span>
+                <span
+                  style={{
+                    ...s.optLabel,
+                    color: isSelected ? "#155215" : "#18181a",
+                  }}
+                >
+                  {type === "call" ? "Open Call Contract" : "Open Put Contract"}
+                </span>
+                <span style={s.optDesc}>
+                  {type === "call" ? (
+                    <>Right to buy at strike if price rises above strike</>
+                  ) : (
+                    <>Right to sell at strike if price falls below strike</>
+                  )}
+                </span>
               </button>
             );
           })}
@@ -506,23 +1085,57 @@ function OptionsTab({
       </div>
 
       <div style={s.card}>
-        <p style={s.cardTitle}>Sell an option (collect premium, take on risk)</p>
+        <p style={s.cardTitle}>
+          Sell options (receive premium):
+          <br />
+          Call +${estCallPremium.toFixed(2)} | Put +${estPutPremium.toFixed(2)}
+        </p>
         <div style={s.btnGrid}>
           {(["call", "put"] as const).map((type) => {
-            const actLabel = type === "call" ? `Sell Call @ $${strike}` : `Sell Put @ $${strike}`;
+            const actLabel =
+              type === "call" ? "Write Call Contract" : "Write Put Contract";
             const isSelected = pendingLabel === actLabel;
             return (
-              <button key={type}
-                style={optStyle(type === "call" ? s.optBtnWriteCall : s.optBtnWritePut, actLabel)}
+              <button
+                key={type}
+                style={optStyle(
+                  type === "call" ? s.optBtnWriteCall : s.optBtnWritePut,
+                  actLabel,
+                )}
                 disabled={!canAct}
-                onClick={() => act({ kind: "write_option", option_type: type, strike, expiry_cycles: OPT_EXPIRY, quantity: 1 }, actLabel)}
+                onClick={() =>
+                  act(
+                    {
+                      kind: "write_option",
+                      option_type: type,
+                      strike,
+                      expiry_cycles: OPT_EXPIRY,
+                      quantity: 1,
+                    },
+                    actLabel,
+                  )
+                }
               >
                 <span style={s.optEmoji}>{isSelected ? "✓" : "💰"}</span>
-                <span style={{ ...s.optLabel, color: isSelected ? "#155215" : "#18181a" }}>
-                  {type === "call" ? "Write Call" : "Write Put"}
+                <span
+                  style={{
+                    ...s.optLabel,
+                    color: isSelected ? "#155215" : "#18181a",
+                  }}
+                >
+                  {type === "call"
+                    ? "Write Call Contract"
+                    : "Write Put Contract"}
                 </span>
-                <span style={s.optDesc}>{type === "call" ? "you pay out if price surges" : "you pay out if price crashes"}</span>
-                <span style={s.optMeta}>trigger at ${strike}</span>
+                <span style={s.optDesc}>
+                  {type === "call" ? (
+                    <>
+                      Obligation to sell at strike if price rises above strike
+                    </>
+                  ) : (
+                    <>Obligation to buy at strike if price falls below strike</>
+                  )}
+                </span>
               </button>
             );
           })}
@@ -535,7 +1148,9 @@ function OptionsTab({
 // ── Chaos tab ─────────────────────────────────────────────────────────────────
 
 function ChaosTab({
-  act, canAct, pendingLabel,
+  act,
+  canAct,
+  pendingLabel,
 }: {
   act: (a: PlayerAction, label: string) => void;
   canAct: boolean;
@@ -556,17 +1171,28 @@ function ChaosTab({
   const [hitmanFarm, setHitmanFarm] = useState<number | null>(null);
   const [targetMill, setTargetMill] = useState<number | null>(null);
   const [targetNpc, setTargetNpc] = useState<number | null>(null);
-  const [rumor, setRumor] = useState("");
   const [acqFarm, setAcqFarm] = useState<number | null>(null);
   const [acqMill, setAcqMill] = useState<number | null>(null);
 
   // Fallback to first available if the stored selection is gone / never set.
-  const vTargetFarm = otherFarms.find(f => f.id === targetFarm) ? targetFarm : (otherFarms[0]?.id ?? null);
-  const vHitmanFarm = otherFarms.find(f => f.id === hitmanFarm) ? hitmanFarm : (otherFarms[0]?.id ?? null);
-  const vTargetMill = aliveMills.find(m => m.id === targetMill) ? targetMill : (aliveMills[0]?.id ?? null);
-  const vTargetNpc  = aliveNpcs.find(n => n.id === targetNpc)   ? targetNpc  : (aliveNpcs[0]?.id  ?? null);
-  const vAcqFarm    = otherFarms.find(f => f.id === acqFarm)    ? acqFarm    : (otherFarms[0]?.id ?? null);
-  const vAcqMill    = aliveMills.find(m => m.id === acqMill)    ? acqMill    : (aliveMills[0]?.id ?? null);
+  const vTargetFarm = otherFarms.find((f) => f.id === targetFarm)
+    ? targetFarm
+    : (otherFarms[0]?.id ?? null);
+  const vHitmanFarm = otherFarms.find((f) => f.id === hitmanFarm)
+    ? hitmanFarm
+    : (otherFarms[0]?.id ?? null);
+  const vTargetMill = aliveMills.find((m) => m.id === targetMill)
+    ? targetMill
+    : (aliveMills[0]?.id ?? null);
+  const vTargetNpc = aliveNpcs.find((n) => n.id === targetNpc)
+    ? targetNpc
+    : (aliveNpcs[0]?.id ?? null);
+  const vAcqFarm = otherFarms.find((f) => f.id === acqFarm)
+    ? acqFarm
+    : (otherFarms[0]?.id ?? null);
+  const vAcqMill = aliveMills.find((m) => m.id === acqMill)
+    ? acqMill
+    : (aliveMills[0]?.id ?? null);
 
   const cash = parseFloat(state.myCash);
   const farmCost = price * 15;
@@ -574,146 +1200,215 @@ function ChaosTab({
 
   // Resolve display name for a farm owner: check players first, then NPCs.
   function ownerLabel(ownerId: number): string {
-    const player = state.knownPlayers.find(p => p.id === ownerId);
+    const player = state.knownPlayers.find((p) => p.id === ownerId);
     if (player) return `${player.name}`;
-    const npc = state.npcOwners.find(n => n.id === ownerId);
+    const npc = state.npcOwners.find((n) => n.id === ownerId);
     if (npc) return npc.name;
     return `#${ownerId}`;
   }
 
+  function ChaosRow({
+    title,
+    value,
+    onChange,
+    options,
+    emoji,
+    costLabel,
+    disabled,
+    selected,
+    onAction,
+  }: {
+    title: string;
+    value: number | null;
+    onChange: (id: number | null) => void;
+    options: Array<{ id: number; text: string }>;
+    emoji: string;
+    costLabel: string;
+    disabled: boolean;
+    selected: boolean;
+    onAction: () => void;
+  }) {
+    return (
+      <div style={s.card}>
+        <p style={s.cardTitle}>{title}</p>
+        <div style={s.chaosRow}>
+          <select
+            style={s.chaosSelect}
+            value={value ?? ""}
+            onChange={(e) =>
+              onChange(e.target.value === "" ? null : Number(e.target.value))
+            }
+          >
+            {options.length === 0 && <option value="">No targets</option>}
+            {options.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.text}
+              </option>
+            ))}
+          </select>
+          <button
+            style={{
+              ...s.chaosActBtn,
+              ...(selected ? s.chaosActBtnSelected : {}),
+            }}
+            disabled={disabled}
+            onClick={onAction}
+          >
+            <span style={s.chaosActEmoji}>{emoji}</span>
+            <span style={s.chaosActCost}>{costLabel}</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const farmOptions = otherFarms.map((f) => ({
+    id: f.id,
+    text: `Farm #${f.id} - ${ownerLabel(f.owner)} (${f.state})`,
+  }));
+  const workerOptions = otherFarms.map((f) => ({
+    id: f.id,
+    text: `Farm #${f.id} - ${ownerLabel(f.owner)} (${f.workers} workers)`,
+  }));
+  const millOptions = aliveMills.map((m) => ({
+    id: m.id,
+    text: `Mill #${m.id} (${m.state})`,
+  }));
+  const npcOptions = aliveNpcs.map((n) => ({
+    id: n.id,
+    text: n.name,
+  }));
+
   return (
     <>
-      <div style={s.card}>
-        <div style={s.statGrid}>
-          <Stat label="Aura" value={aura.toFixed(0)} color="#7a5010" />
-          <Stat label="Cash" value={`$${cash.toFixed(0)}`} />
-        </div>
-      </div>
+      <ChaosRow
+        title="Burn Farm"
+        value={vTargetFarm}
+        onChange={setTargetFarm}
+        options={farmOptions}
+        emoji="🔥"
+        costLabel="200 aura"
+        disabled={
+          !canAct ||
+          aura < 200 ||
+          vTargetFarm === null ||
+          farmOptions.length === 0
+        }
+        selected={pendingLabel === `Burn Farm #${vTargetFarm}`}
+        onAction={() =>
+          act(
+            { kind: "burn_farm", target_farm: vTargetFarm! },
+            `Burn Farm #${vTargetFarm}`,
+          )
+        }
+      />
 
-      {/* Burn Farm */}
-      <div style={s.card}>
-        <p style={s.cardTitle}>🔥 Burn Farm — 20 aura</p>
-        <div style={s.targetRow}>
-          <select style={s.select} value={vTargetFarm ?? ""} onChange={(e) => setTargetFarm(Number(e.target.value))}>
-            {otherFarms.length === 0 && <option value="">No targets</option>}
-            {otherFarms.map((f) => (
-              <option key={f.id} value={f.id}>Farm #{f.id} — {ownerLabel(f.owner)} ({f.state})</option>
-            ))}
-          </select>
-          <ActionBtn label="🔥 Burn" sub={aura >= 20 ? "lights it up" : "need 20 aura"}
-            disabled={!canAct || aura < 20 || vTargetFarm === null || otherFarms.length === 0}
-            color="#f5e8e8" borderColor="#aa5a5a"
-            selected={pendingLabel === `Burn Farm #${vTargetFarm}`}
-            onClick={() => act({ kind: "burn_farm", target_farm: vTargetFarm! }, `Burn Farm #${vTargetFarm}`)} />
-        </div>
-      </div>
+      <ChaosRow
+        title="Burn Mill"
+        value={vTargetMill}
+        onChange={setTargetMill}
+        options={millOptions}
+        emoji="🏭🔥"
+        costLabel="250 aura"
+        disabled={
+          !canAct ||
+          aura < 250 ||
+          vTargetMill === null ||
+          millOptions.length === 0
+        }
+        selected={pendingLabel === `Burn Mill #${vTargetMill}`}
+        onAction={() =>
+          act(
+            { kind: "burn_mill", target_mill: vTargetMill! },
+            `Burn Mill #${vTargetMill}`,
+          )
+        }
+      />
 
-      {/* Burn Mill */}
-      <div style={s.card}>
-        <p style={s.cardTitle}>🏭🔥 Burn Mill — 25 aura</p>
-        <div style={s.targetRow}>
-          <select style={s.select} value={vTargetMill ?? ""} onChange={(e) => setTargetMill(Number(e.target.value))}>
-            {aliveMills.length === 0 && <option value="">No mills</option>}
-            {aliveMills.map((m) => (
-              <option key={m.id} value={m.id}>Mill #{m.id} ({m.state})</option>
-            ))}
-          </select>
-          <ActionBtn label="🏭🔥 Burn" sub={aura >= 25 ? "shuts it down" : "need 25 aura"}
-            disabled={!canAct || aura < 25 || vTargetMill === null || aliveMills.length === 0}
-            color="#f5e8e8" borderColor="#aa5a5a"
-            selected={pendingLabel === `Burn Mill #${vTargetMill}`}
-            onClick={() => act({ kind: "burn_mill", target_mill: vTargetMill! }, `Burn Mill #${vTargetMill}`)} />
-        </div>
-      </div>
+      <ChaosRow
+        title="Hire Hitman On Worker"
+        value={vHitmanFarm}
+        onChange={setHitmanFarm}
+        options={workerOptions}
+        emoji="🔪"
+        costLabel="500 aura"
+        disabled={
+          !canAct ||
+          aura < 500 ||
+          vHitmanFarm === null ||
+          workerOptions.length === 0
+        }
+        selected={pendingLabel === `Hitman Worker on Farm #${vHitmanFarm}`}
+        onAction={() =>
+          act(
+            { kind: "hitman_worker", target_farm: vHitmanFarm! },
+            `Hitman Worker on Farm #${vHitmanFarm}`,
+          )
+        }
+      />
 
-      {/* Hitman Worker — targets other players' and NPCs' farms */}
-      <div style={s.card}>
-        <p style={s.cardTitle}>🔪 Hitman Worker — 15 aura</p>
-        <div style={s.targetRow}>
-          <select style={s.select} value={vHitmanFarm ?? ""} onChange={(e) => setHitmanFarm(Number(e.target.value))}>
-            {otherFarms.length === 0 && <option value="">No targets</option>}
-            {otherFarms.map((f) => (
-              <option key={f.id} value={f.id}>Farm #{f.id} — {ownerLabel(f.owner)} ({f.workers} workers)</option>
-            ))}
-          </select>
-          <ActionBtn label="🔪 Send" sub={aura >= 15 ? "one less worker" : "need 15 aura"}
-            disabled={!canAct || aura < 15 || vHitmanFarm === null || otherFarms.length === 0}
-            color="#f0e8f5" borderColor="#9a5aaa"
-            selected={pendingLabel === `Hitman Worker on Farm #${vHitmanFarm}`}
-            onClick={() => act({ kind: "hitman_worker", target_farm: vHitmanFarm! }, `Hitman Worker on Farm #${vHitmanFarm}`)} />
-        </div>
-      </div>
+      <ChaosRow
+        title="Hire Hitman On Farm Owner"
+        value={vTargetNpc}
+        onChange={setTargetNpc}
+        options={npcOptions}
+        emoji="☠️"
+        costLabel="750 aura"
+        disabled={
+          !canAct || aura < 750 || vTargetNpc === null || npcOptions.length === 0
+        }
+        selected={pendingLabel?.startsWith("Hitman on ") ?? false}
+        onAction={() =>
+          act(
+            { kind: "hitman_owner", target_npc: vTargetNpc! },
+            `Hitman on ${aliveNpcs.find((n) => n.id === vTargetNpc)?.name ?? "NPC"}`,
+          )
+        }
+      />
 
-      {/* Hitman NPC Owner */}
-      <div style={s.card}>
-        <p style={s.cardTitle}>☠️ Hitman NPC Owner — 50 aura</p>
-        <div style={s.targetRow}>
-          <select style={s.select} value={vTargetNpc ?? ""} onChange={(e) => setTargetNpc(Number(e.target.value))}>
-            {aliveNpcs.length === 0 && <option value="">No targets</option>}
-            {aliveNpcs.map((n) => (
-              <option key={n.id} value={n.id}>{n.name}</option>
-            ))}
-          </select>
-          <ActionBtn label="☠️ Send" sub={aura >= 50 ? "permanently removed" : "need 50 aura"}
-            disabled={!canAct || aura < 50 || vTargetNpc === null || aliveNpcs.length === 0}
-            color="#f0e8f5" borderColor="#9a5aaa"
-            selected={pendingLabel?.startsWith("Hitman on ") ?? false}
-            onClick={() => act({ kind: "hitman_owner", target_npc: vTargetNpc! }, `Hitman on ${aliveNpcs.find((n) => n.id === vTargetNpc)?.name ?? "NPC"}`)} />
-        </div>
-      </div>
+      <ChaosRow
+        title="Acquire Farm"
+        value={vAcqFarm}
+        onChange={setAcqFarm}
+        options={farmOptions}
+        emoji="🌾"
+        costLabel={`$${farmCost.toFixed(0)}`}
+        disabled={
+          !canAct ||
+          cash < farmCost ||
+          vAcqFarm === null ||
+          farmOptions.length === 0
+        }
+        selected={pendingLabel === `Acquire Farm #${vAcqFarm}`}
+        onAction={() =>
+          act(
+            { kind: "acquire_farm", target_farm: vAcqFarm! },
+            `Acquire Farm #${vAcqFarm}`,
+          )
+        }
+      />
 
-      {/* Spread Rumor */}
-      <div style={s.card}>
-        <p style={s.cardTitle}>📢 Spread Rumor — 5 aura</p>
-        <input
-          style={{ ...s.select, marginBottom: "0.5rem" }}
-          placeholder="Type your rumor…"
-          value={rumor}
-          maxLength={120}
-          onChange={(e) => setRumor(e.target.value)}
-        />
-        <ActionBtn label="📢 Spread" sub={aura >= 5 ? `"${rumor.slice(0, 20)}…"` : "need 5 aura"}
-          disabled={!canAct || aura < 5 || rumor.trim().length === 0}
-          color="#f5f2e0" borderColor="#9a8a40"
-          selected={pendingLabel === "Spread Rumor"}
-          onClick={() => { act({ kind: "spread_rumor", text: rumor.trim() }, "Spread Rumor"); setRumor(""); }} />
-      </div>
-
-      {/* Acquire Farm */}
-      <div style={s.card}>
-        <p style={s.cardTitle}>🌾 Acquire Farm — ~${farmCost.toFixed(0)}</p>
-        <div style={s.targetRow}>
-          <select style={s.select} value={vAcqFarm ?? ""} onChange={(e) => setAcqFarm(Number(e.target.value))}>
-            {otherFarms.length === 0 && <option value="">No farms available</option>}
-            {otherFarms.map((f) => (
-              <option key={f.id} value={f.id}>Farm #{f.id} — {ownerLabel(f.owner)} ({f.fields} fields)</option>
-            ))}
-          </select>
-          <ActionBtn label="🌾 Buy" sub={cash >= farmCost ? `$${farmCost.toFixed(0)}` : "not enough cash"}
-            disabled={!canAct || cash < farmCost || vAcqFarm === null || otherFarms.length === 0}
-            color="#e8f2f5" borderColor="#5a8aa0"
-            selected={pendingLabel === `Acquire Farm #${vAcqFarm}`}
-            onClick={() => act({ kind: "acquire_farm", target_farm: vAcqFarm! }, `Acquire Farm #${vAcqFarm}`)} />
-        </div>
-      </div>
-
-      {/* Acquire Mill */}
-      <div style={s.card}>
-        <p style={s.cardTitle}>🏭 Acquire Mill — ~${millCost.toFixed(0)}</p>
-        <div style={s.targetRow}>
-          <select style={s.select} value={vAcqMill ?? ""} onChange={(e) => setAcqMill(Number(e.target.value))}>
-            {aliveMills.length === 0 && <option value="">No mills available</option>}
-            {aliveMills.map((m) => (
-              <option key={m.id} value={m.id}>Mill #{m.id} ({m.state})</option>
-            ))}
-          </select>
-          <ActionBtn label="🏭 Buy" sub={cash >= millCost ? `$${millCost.toFixed(0)}` : "not enough cash"}
-            disabled={!canAct || cash < millCost || vAcqMill === null || aliveMills.length === 0}
-            color="#e8f2f5" borderColor="#5a8aa0"
-            selected={pendingLabel === `Acquire Mill #${vAcqMill}`}
-            onClick={() => act({ kind: "acquire_mill", target_mill: vAcqMill! }, `Acquire Mill #${vAcqMill}`)} />
-        </div>
-      </div>
+      <ChaosRow
+        title="Acquire Mill"
+        value={vAcqMill}
+        onChange={setAcqMill}
+        options={millOptions}
+        emoji="🏭"
+        costLabel={`$${millCost.toFixed(0)}`}
+        disabled={
+          !canAct ||
+          cash < millCost ||
+          vAcqMill === null ||
+          millOptions.length === 0
+        }
+        selected={pendingLabel === `Acquire Mill #${vAcqMill}`}
+        onAction={() =>
+          act(
+            { kind: "acquire_mill", target_mill: vAcqMill! },
+            `Acquire Mill #${vAcqMill}`,
+          )
+        }
+      />
     </>
   );
 }
@@ -721,7 +1416,9 @@ function ChaosTab({
 // ── God tab ───────────────────────────────────────────────────────────────────
 
 function GodTab({
-  act, canAct, pendingLabel,
+  act,
+  canAct,
+  pendingLabel,
 }: {
   act: (a: PlayerAction, label: string) => void;
   canAct: boolean;
@@ -737,11 +1434,46 @@ function GodTab({
     color?: string;
     borderColor?: string;
   }> = [
-    { label: "Bumper Harvest", sub: "double yield this cycle", cost: 60, action: { kind: "bumper_harvest" }, color: "#e8f5e8", borderColor: "#4a9a4a" },
-    { label: "Drought", sub: "stunt crops for 4 cycles", cost: 80, action: { kind: "drought" }, color: "#f5f2e0", borderColor: "#9a8040" },
-    { label: "Market Panic", sub: "crash prices", cost: 100, action: { kind: "market_panic" }, color: "#f5e8e8", borderColor: "#aa5a5a" },
-    { label: "Famine", sub: "halve all farm output", cost: 150, action: { kind: "famine" }, color: "#f5e8e8", borderColor: "#bb3a3a" },
-    { label: "Nuclear Fallout", sub: "destroy all farms, end game", cost: 300, action: { kind: "nuclear_fallout" }, color: "#f8e8e8", borderColor: "#cc1010" },
+    {
+      label: "Great Harvest",
+      sub: "bumper = unusually big harvest",
+      cost: 50,
+      action: { kind: "bumper_harvest" },
+      color: "#e8f5e8",
+      borderColor: "#4a9a4a",
+    },
+    {
+      label: "Drought",
+      sub: "stunt crops for 4 cycles",
+      cost: 100,
+      action: { kind: "drought" },
+      color: "#f5f2e0",
+      borderColor: "#9a8040",
+    },
+    {
+      label: "Market Panic",
+      sub: "market-wide panic selling",
+      cost: 250,
+      action: { kind: "market_panic" },
+      color: "#f5e8e8",
+      borderColor: "#aa5a5a",
+    },
+    {
+      label: "Famine",
+      sub: "halve all farm output",
+      cost: 500,
+      action: { kind: "famine" },
+      color: "#f5e8e8",
+      borderColor: "#bb3a3a",
+    },
+    {
+      label: "Nuclear Fallout",
+      sub: "destroy all farms, end game",
+      cost: 1000,
+      action: { kind: "nuclear_fallout" },
+      color: "#f8e8e8",
+      borderColor: "#cc1010",
+    },
   ];
 
   return (
@@ -749,12 +1481,22 @@ function GodTab({
       <div style={s.card}>
         <div style={s.statGrid}>
           <Stat label="Aura" value={aura.toFixed(0)} color="#7a5010" />
-          <Stat label="Next power" value={aura < 60 ? `${(60 - aura).toFixed(0)} needed` : "unlocked"} color={aura >= 60 ? "#1d6b1d" : "#9a9a90"} />
+          <Stat
+            label="Next power"
+            value={aura < 60 ? `${(60 - aura).toFixed(0)} needed` : "unlocked"}
+            color={aura >= 60 ? "#1d6b1d" : "#9a9a90"}
+          />
         </div>
       </div>
       <div style={s.card}>
-        <p style={s.cardTitle}>Powers (aura accumulates +10/cycle)</p>
-        <div style={{ display: "flex", flexDirection: "column" as const, gap: "0.5rem" }}>
+        <p style={s.cardTitle}>Powers (+10 aura/cycle, top-5 bonus every 5 cycles)</p>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column" as const,
+            gap: "0.5rem",
+          }}
+        >
           {powers.map((p) => {
             const isSelected = pendingLabel === p.label;
             const isLocked = !canAct || aura < p.cost;
@@ -763,10 +1505,20 @@ function GodTab({
                 key={p.label}
                 style={{
                   ...s.actionBtn,
-                  background: isLocked ? "#f5f3ef" : isSelected ? "#e6f5e6" : p.color ?? "#e8eff5",
-                  borderColor: isLocked ? "#e2ddd6" : isSelected ? "#1d6b1d" : p.borderColor ?? "#5a8ab0",
+                  background: isLocked
+                    ? "#f5f3ef"
+                    : isSelected
+                      ? "#e6f5e6"
+                      : (p.color ?? "#e8eff5"),
+                  borderColor: isLocked
+                    ? "#e2ddd6"
+                    : isSelected
+                      ? "#1d6b1d"
+                      : (p.borderColor ?? "#5a8ab0"),
                   borderWidth: isSelected ? "2.5px" : "1.5px",
-                  boxShadow: isSelected ? "0 0 0 3px rgba(29,107,29,0.12)" : "none",
+                  boxShadow: isSelected
+                    ? "0 0 0 3px rgba(29,107,29,0.12)"
+                    : "none",
                   opacity: aura < p.cost ? 0.4 : 1,
                   cursor: isLocked ? "not-allowed" : "pointer",
                   flexDirection: "row" as const,
@@ -777,13 +1529,24 @@ function GodTab({
                 onClick={() => act(p.action, p.label)}
               >
                 <div>
-                  <span style={{ ...s.actionBtnLabel, color: isSelected ? "#155215" : "#18181a" }}>
-                    {isSelected ? "✓ " : ""}{p.label}
+                  <span
+                    style={{
+                      ...s.actionBtnLabel,
+                      color: isSelected ? "#155215" : "#18181a",
+                    }}
+                  >
+                    {isSelected ? "✓ " : ""}
+                    {p.label}
                   </span>
                   <br />
                   <span style={s.actionBtnSub}>{p.sub}</span>
                 </div>
-                <span style={{ fontSize: "0.75rem", color: aura >= p.cost ? "#7a5010" : "#9a9a90" }}>
+                <span
+                  style={{
+                    fontSize: "0.75rem",
+                    color: aura >= p.cost ? "#7a5010" : "#9a9a90",
+                  }}
+                >
                   {p.cost} aura
                 </span>
               </button>
@@ -797,7 +1560,15 @@ function GodTab({
 
 // ── Shared small components ───────────────────────────────────────────────────
 
-function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
+function Stat({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) {
   return (
     <div style={s.stat}>
       <span style={s.statLabel}>{label}</span>
@@ -807,10 +1578,21 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
 }
 
 function ActionBtn({
-  label, sub, disabled, onClick, color = "#e8eff5", borderColor = "#5a8ab0", selected = false,
+  label,
+  sub,
+  disabled,
+  onClick,
+  color = "#e8eff5",
+  borderColor = "#5a8ab0",
+  selected = false,
 }: {
-  label: string; sub: string; disabled: boolean; onClick: () => void;
-  color?: string; borderColor?: string; selected?: boolean;
+  label: string;
+  sub: string;
+  disabled: boolean;
+  onClick: () => void;
+  color?: string;
+  borderColor?: string;
+  selected?: boolean;
 }) {
   return (
     <button
@@ -826,8 +1608,11 @@ function ActionBtn({
       disabled={disabled}
       onClick={onClick}
     >
-      <span style={{ ...s.actionBtnLabel, color: selected ? "#155215" : "#18181a" }}>
-        {selected ? "✓ " : ""}{label}
+      <span
+        style={{ ...s.actionBtnLabel, color: selected ? "#155215" : "#18181a" }}
+      >
+        {selected ? "✓ " : ""}
+        {label}
       </span>
       <span style={s.actionBtnSub}>{sub}</span>
     </button>
@@ -837,151 +1622,583 @@ function ActionBtn({
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s = {
-  root: { display: "flex", flexDirection: "column" as const, minHeight: "100vh", width: "100%", maxWidth: "100%", overflow: "hidden", background: "#f5f3ef", fontFamily: "inherit" },
-  topBar: {
-    display: "flex", alignItems: "center",
-    padding: "0.6rem 1rem", background: "#ffffff", borderBottom: "1px solid #e2ddd6",
-    position: "sticky" as const, top: 0, zIndex: 10, width: "100%",
+  root: {
+    display: "flex",
+    flexDirection: "column" as const,
+    minHeight: "100dvh",
+    height: "100dvh",
+    maxHeight: "100dvh",
+    width: "100%",
+    maxWidth: "100%",
+    overflow: "hidden",
+    overscrollBehavior: "none" as const,
+    background: "#f5f3ef",
+    fontFamily: "inherit",
   },
-  topBarLeft: { flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "flex-start", minWidth: 0 },
-  topBarCenter: { flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", minWidth: 0 },
-  topBarRight: { flex: 1, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "0.4rem", minWidth: 0 },
-  priceLabel: { display: "block", fontSize: "0.55rem", color: "#9a9a90", letterSpacing: "0.1em", textTransform: "uppercase" as const, fontWeight: "600" as const },
-  priceValue: { fontSize: "1.35rem", fontWeight: "800" as const, color: "#1d6b1d", letterSpacing: "-0.01em" },
+  topBar: {
+    display: "flex",
+    alignItems: "center",
+    padding: "calc(0.35rem + env(safe-area-inset-top)) 1rem 0.45rem",
+    background: "#ffffff",
+    borderBottom: "1px solid #e2ddd6",
+    position: "sticky" as const,
+    top: 0,
+    zIndex: 30,
+    width: "100%",
+  },
+  topBarLeft: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "flex-start",
+    minWidth: 0,
+  },
+  topBarCenter: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    minWidth: 0,
+  },
+  topBarRight: {
+    flex: 1,
+    display: "flex",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    gap: "0.4rem",
+    minWidth: 0,
+  },
+  topBarMidStats: {
+    display: "flex",
+    gap: "0",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: "8rem",
+    width: "100%",
+  },
+  topBarMidDivider: {
+    width: 1,
+    height: "1.6rem",
+    background: "#e0dbd2",
+    flexShrink: 0,
+  },
+  topBarMidStat: {
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    minWidth: "7.2rem",
+    flex: 1,
+  },
+  topBarMidValue: {
+    fontSize: "1.05rem",
+    fontWeight: "800" as const,
+    color: "#1d6b1d",
+    letterSpacing: "-0.01em",
+    lineHeight: 1.1,
+  },
+  priceLabel: {
+    display: "block",
+    fontSize: "0.62rem",
+    color: "#6f6f66",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    fontWeight: "700" as const,
+  },
+  priceValue: {
+    fontSize: "1.35rem",
+    fontWeight: "800" as const,
+    color: "#1d6b1d",
+    letterSpacing: "-0.01em",
+  },
   helpBtn: {
-    flexShrink: 0, width: 26, height: 26, borderRadius: "50%",
-    background: "#f0eee9", border: "1px solid #e2ddd6",
-    color: "#6b6b63", fontSize: "0.8rem", fontWeight: "700" as const,
-    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-    fontFamily: "inherit", padding: 0,
+    flexShrink: 0,
+    width: 26,
+    height: 26,
+    borderRadius: "50%",
+    background: "#f0eee9",
+    border: "1px solid #e2ddd6",
+    color: "#6b6b63",
+    fontSize: "0.8rem",
+    fontWeight: "700" as const,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontFamily: "inherit",
+    padding: 0,
   },
   leaveBtn: {
-    flexShrink: 0, width: 26, height: 26, borderRadius: "50%",
-    background: "#fdeaea", border: "1px solid #e8b0b0",
-    color: "#c05050", fontSize: "0.75rem", fontWeight: "700" as const,
-    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-    fontFamily: "inherit", padding: 0,
+    flexShrink: 0,
+    width: 26,
+    height: 26,
+    borderRadius: "50%",
+    background: "#fdeaea",
+    border: "1px solid #e8b0b0",
+    color: "#c05050",
+    fontSize: "0.75rem",
+    fontWeight: "700" as const,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontFamily: "inherit",
+    padding: 0,
   },
   countdownBar: {
-    display: "flex", flexDirection: "row" as const, alignItems: "center", justifyContent: "center",
-    padding: "0.4rem 1rem", minHeight: 54, background: "#f0f8f0", borderBottom: "1px solid #c8e4c8",
-    gap: "0.5rem", width: "100%", minWidth: 0,
+    display: "flex",
+    flexDirection: "row" as const,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "0.4rem 1rem",
+    minHeight: 54,
+    background: "#f0f8f0",
+    borderBottom: "1px solid #c8e4c8",
+    gap: "0.5rem",
+    width: "100%",
+    minWidth: 0,
   },
-  countdownNum: { fontSize: "1.8rem", fontWeight: "800" as const, color: "#1d6b1d", lineHeight: 1, letterSpacing: "-0.02em" },
-  countdownLabel: { fontSize: "0.6rem", color: "#5a9a5a", letterSpacing: "0.08em", textTransform: "uppercase" as const, marginTop: "0.1rem", fontWeight: "600" as const },
+  countdownNum: {
+    fontSize: "1.8rem",
+    fontWeight: "800" as const,
+    color: "#1d6b1d",
+    lineHeight: 1,
+    letterSpacing: "-0.02em",
+  },
+  countdownLabel: {
+    fontSize: "0.6rem",
+    color: "#5a9a5a",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    marginTop: "0.1rem",
+    fontWeight: "600" as const,
+  },
   lockBar: {
-    position: "sticky" as const, bottom: 0, display: "flex", gap: "0.5rem",
-    padding: "0.6rem 1rem", background: "#ffffff", borderTop: "1px solid #e2ddd6", zIndex: 10,
+    position: "fixed" as const,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    display: "flex",
+    gap: "0.5rem",
+    padding: "0.4rem 0.9rem calc(0.4rem + env(safe-area-inset-bottom))",
+    background: "#ffffff",
+    borderTop: "1px solid #e2ddd6",
+    zIndex: 20,
   },
   lockBtn: {
-    flex: 1, padding: "0.8rem 0.5rem", minHeight: 48, border: "1.5px solid", borderRadius: 8,
-    fontFamily: "inherit", fontSize: "0.85rem", fontWeight: "700" as const,
-    color: "#18181a", cursor: "pointer",
+    flex: 1,
+    padding: "0.55rem 0.5rem",
+    minHeight: 40,
+    border: "1.5px solid",
+    borderRadius: 8,
+    fontFamily: "inherit",
+    fontSize: "0.82rem",
+    fontWeight: "700" as const,
+    color: "#18181a",
+    cursor: "pointer",
   },
   noActionBtn: { background: "#f5f3ef", borderColor: "#d1cbc3" },
+  repeatBtn: { background: "#eef2f9", borderColor: "#8a9fc0" },
   lockInBtn: { background: "#e8f5e8", borderColor: "#4a9a4a" },
   tabBar: {
-    display: "flex", background: "#ffffff", borderBottom: "1px solid #e2ddd6", width: "100%",
-    paddingLeft: "0.75rem", paddingRight: "0.75rem",
+    display: "flex",
+    background: "#ffffff",
+    borderBottom: "1px solid #e2ddd6",
+    width: "100%",
+    paddingLeft: "0.75rem",
+    paddingRight: "0.75rem",
+    position: "sticky" as const,
+    top: 0,
+    zIndex: 25,
   },
   tabBtn: {
-    flex: 1, padding: "0.6rem 0.2rem", minHeight: 40, background: "transparent",
-    border: "none", borderBottom: "2.5px solid transparent", color: "#9a9a90",
-    fontSize: "0.65rem", fontFamily: "inherit", cursor: "pointer", letterSpacing: "0.04em",
-    textTransform: "uppercase" as const, overflow: "hidden", textOverflow: "ellipsis" as const,
-    whiteSpace: "nowrap" as const, minWidth: 0, fontWeight: "600" as const,
+    flex: 1,
+    padding: "0.6rem 0.2rem",
+    minHeight: 40,
+    background: "transparent",
+    border: "none",
+    borderBottom: "2.5px solid transparent",
+    color: "#9a9a90",
+    fontSize: "0.65rem",
+    fontFamily: "inherit",
+    cursor: "pointer",
+    letterSpacing: "0.04em",
+    textTransform: "uppercase" as const,
+    overflow: "hidden",
+    textOverflow: "ellipsis" as const,
+    whiteSpace: "nowrap" as const,
+    minWidth: 0,
+    fontWeight: "600" as const,
   },
   tabBtnActive: { color: "#1d6b1d", borderBottomColor: "#1d6b1d" },
-  content: { display: "flex", flexDirection: "column" as const, gap: "0.5rem", padding: "0.5rem 1rem", flex: 1, minWidth: 0, width: "100%" },
-  card: { background: "#ffffff", border: "1px solid #e2ddd6", borderRadius: 10, padding: "0.75rem 0.875rem", minWidth: 0 },
-  cardTitle: { margin: "0 0 0.5rem", fontSize: "0.65rem", color: "#9a9a90", textTransform: "uppercase" as const, letterSpacing: "0.08em", fontWeight: "700" as const },
-  statGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: "0.5rem 0.75rem", minWidth: 0 },
-  stat: { display: "flex", flexDirection: "column" as const, minWidth: 0 },
-  statLabel: { fontSize: "0.6rem", color: "#9a9a90", textTransform: "uppercase" as const, letterSpacing: "0.06em", fontWeight: "600" as const },
-  statValue: { fontSize: "0.95rem", fontWeight: "600" as const, marginTop: "0.1rem", color: "#18181a", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const },
-  btnGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.4rem", minWidth: 0 },
-  actionBtn: {
-    border: "1.5px solid", borderRadius: 8, padding: "0.75rem 0.5rem", minHeight: 58,
-    display: "flex", flexDirection: "column" as const, alignItems: "center",
-    justifyContent: "center" as const, gap: "0.2rem", fontFamily: "inherit",
+  content: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "0.5rem",
+    padding: "0.5rem 1rem calc(6.2rem + env(safe-area-inset-bottom))",
+    flex: 1,
+    minWidth: 0,
+    width: "100%",
+    overflowY: "auto" as const,
+    WebkitOverflowScrolling: "touch" as const,
+    overscrollBehavior: "contain" as const,
   },
-  actionBtnLabel: { fontSize: "0.875rem", fontWeight: "700" as const, color: "#18181a" },
-  actionBtnSub: { fontSize: "0.62rem", color: "#7a7a70" },
+  card: {
+    background: "#ffffff",
+    border: "1px solid #e2ddd6",
+    borderRadius: 10,
+    padding: "0.75rem 0.875rem",
+    minWidth: 0,
+  },
+  cardTitle: {
+    margin: "0 0 0.5rem",
+    fontSize: "0.72rem",
+    color: "#6f6f66",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.08em",
+    fontWeight: "700" as const,
+  },
+  statGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+    gap: "0.5rem 0.75rem",
+    minWidth: 0,
+  },
+  stat: { display: "flex", flexDirection: "column" as const, minWidth: 0 },
+  statLabel: {
+    fontSize: "0.66rem",
+    color: "#6f6f66",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+    fontWeight: "700" as const,
+  },
+  statValue: {
+    fontSize: "0.95rem",
+    fontWeight: "600" as const,
+    marginTop: "0.1rem",
+    color: "#18181a",
+    overflow: "hidden" as const,
+    textOverflow: "ellipsis" as const,
+    whiteSpace: "nowrap" as const,
+  },
+  btnGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+    gap: "0.4rem",
+    minWidth: 0,
+  },
+  actionBtn: {
+    border: "1.5px solid",
+    borderRadius: 8,
+    padding: "0.56rem 0.5rem",
+    minHeight: 52,
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    justifyContent: "center" as const,
+    gap: "0.05rem",
+    fontFamily: "inherit",
+  },
+  actionBtnLabel: {
+    fontSize: "0.875rem",
+    fontWeight: "700" as const,
+    color: "#18181a",
+  },
+  actionBtnSub: { fontSize: "0.78rem", color: "#4f4f49", lineHeight: 1.08 },
   qtyRow: { display: "flex", gap: "0.4rem" },
   qtyBtn: {
-    flex: 1, padding: "0.55rem 0", background: "#f5f3ef", border: "1.5px solid #e2ddd6",
-    borderRadius: 6, color: "#6b6b63", fontSize: "0.95rem", fontFamily: "inherit", cursor: "pointer", fontWeight: "500" as const,
+    flex: 1,
+    padding: "0.55rem 0",
+    background: "#f5f3ef",
+    border: "1.5px solid #e2ddd6",
+    borderRadius: 6,
+    color: "#6b6b63",
+    fontSize: "0.95rem",
+    fontFamily: "inherit",
+    cursor: "pointer",
+    fontWeight: "500" as const,
   },
-  qtyBtnActive: { background: "#e8f5f5", borderColor: "#5a9a9a", color: "#0d5858", fontWeight: "700" as const },
-  targetRow: { display: "flex", gap: "0.4rem", alignItems: "stretch", minWidth: 0 },
-  select: {
-    flex: 1, minWidth: 0, background: "#f5f3ef", border: "1.5px solid #e2ddd6", color: "#18181a",
-    padding: "0.5rem 0.5rem", borderRadius: 6, fontFamily: "inherit", fontSize: "0.82rem",
+  qtyBtnActive: {
+    background: "#e8f5f5",
+    borderColor: "#5a9a9a",
+    color: "#0d5858",
+    fontWeight: "700" as const,
+  },
+  targetRow: {
+    display: "flex",
+    gap: "0.4rem",
+    alignItems: "stretch",
+    minWidth: 0,
+  },
+  chaosRow: {
+    display: "flex",
+    gap: "0.45rem",
+    alignItems: "stretch",
+    minWidth: 0,
+  },
+  chaosSelect: {
+    flex: 1,
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "100%",
+    background: "#f5f3ef",
+    border: "1.5px solid #e2ddd6",
+    color: "#18181a",
+    padding: "0.62rem 0.5rem",
+    borderRadius: 8,
+    fontFamily: "inherit",
+    fontSize: "0.82rem",
+    whiteSpace: "nowrap" as const,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
     appearance: "auto" as const,
   },
-  qtySlider: { width: "100%", marginTop: "0.5rem", accentColor: "#1d6b1d", cursor: "pointer" },
-  optNote: { margin: "0 0 0.5rem", fontSize: "0.72rem", color: "#9a9a90", fontStyle: "italic" as const },
+  chaosActBtn: {
+    width: "4.2rem",
+    minWidth: "4.2rem",
+    border: "1.5px solid #d5cec3",
+    background: "#fffdf9",
+    borderRadius: 8,
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    justifyContent: "center" as const,
+    gap: "0.15rem",
+    fontFamily: "inherit",
+    cursor: "pointer",
+    color: "#3a3a36",
+    padding: "0.35rem 0.25rem",
+  },
+  chaosActBtnSelected: {
+    borderColor: "#1d6b1d",
+    boxShadow: "0 0 0 3px rgba(29,107,29,0.12)",
+  },
+  chaosActEmoji: {
+    fontSize: "1.1rem",
+    lineHeight: 1,
+  },
+  chaosActCost: {
+    fontSize: "0.7rem",
+    fontWeight: "700" as const,
+    color: "#5b5b54",
+    lineHeight: 1,
+    textAlign: "center" as const,
+  },
+  select: {
+    flex: 1,
+    minWidth: 0,
+    background: "#f5f3ef",
+    border: "1.5px solid #e2ddd6",
+    color: "#18181a",
+    padding: "0.5rem 0.5rem",
+    borderRadius: 6,
+    fontFamily: "inherit",
+    fontSize: "0.82rem",
+    appearance: "auto" as const,
+  },
+  qtySlider: {
+    width: "100%",
+    marginTop: "0.5rem",
+    accentColor: "#1d6b1d",
+    cursor: "pointer",
+  },
+  optNote: {
+    margin: "0 0 0.5rem",
+    fontSize: "0.72rem",
+    color: "#9a9a90",
+    fontStyle: "italic" as const,
+  },
   // Option buttons — large, scannable, emoji-led
   optBtn: {
-    border: "1.5px solid", borderRadius: 10, padding: "0.85rem 0.5rem", minHeight: 88,
-    display: "flex", flexDirection: "column" as const, alignItems: "center",
-    justifyContent: "center" as const, gap: "0.15rem", fontFamily: "inherit",
-    cursor: "pointer", transition: "opacity 0.1s",
+    border: "1.5px solid",
+    borderRadius: 10,
+    padding: "0.66rem 0.5rem",
+    minHeight: 82,
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    justifyContent: "center" as const,
+    gap: "0.04rem",
+    fontFamily: "inherit",
+    cursor: "pointer",
+    transition: "opacity 0.1s",
   },
-  optBtnCall:      { background: "#e8f5e8", borderColor: "#4a9a4a" },
-  optBtnPut:       { background: "#fdeaea", borderColor: "#c05050" },
+  optBtnCall: { background: "#e8f5e8", borderColor: "#4a9a4a" },
+  optBtnPut: { background: "#fdeaea", borderColor: "#c05050" },
   optBtnWriteCall: { background: "#f0f5f0", borderColor: "#8ab08a" },
-  optBtnWritePut:  { background: "#f5f0f0", borderColor: "#b08a8a" },
-  optBtnDisabled:  { background: "#f5f3ef", borderColor: "#e2ddd6", opacity: 0.45, cursor: "not-allowed" as const },
+  optBtnWritePut: { background: "#f5f0f0", borderColor: "#b08a8a" },
+  optBtnDisabled: {
+    background: "#f5f3ef",
+    borderColor: "#e2ddd6",
+    opacity: 0.45,
+    cursor: "not-allowed" as const,
+  },
   optEmoji: { fontSize: "1.4rem", lineHeight: 1 },
-  optLabel: { fontSize: "0.9rem", fontWeight: "700" as const, color: "#18181a" },
-  optDesc:  { fontSize: "0.68rem", color: "#5a5a54", textAlign: "center" as const },
-  optMeta:  { fontSize: "0.6rem", color: "#9a9a90", marginTop: "0.1rem" },
-  empty: { color: "#8a8a80", textAlign: "center" as const, margin: 0, fontSize: "0.875rem" },
-  feedbackCard: { background: "#edf8ed", border: "1px solid #9ac89a", borderRadius: 10, padding: "0.75rem 0.875rem" },
-  feedbackHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" },
-  feedbackTitle: { fontSize: "0.65rem", color: "#1d6b1d", textTransform: "uppercase" as const, letterSpacing: "0.08em", fontWeight: "700" as const },
-  feedbackLine: { fontSize: "0.82rem", color: "#1a4a1a", lineHeight: 1.55, margin: "0.15rem 0" },
-  dismissBtn: { background: "transparent", border: "none", color: "#9a9a90", cursor: "pointer", fontSize: "1.1rem", lineHeight: 1, padding: 0 },
-  headlineCard: { background: "#fffef5", border: "1px solid #e8e0c0", borderRadius: 10, padding: "0.7rem 0.875rem" },
-  headlineLabel: { fontSize: "0.6rem", color: "#9a8040", letterSpacing: "0.1em", display: "block", marginBottom: "0.25rem", fontWeight: "700" as const, textTransform: "uppercase" as const },
-  headlineText: { fontSize: "0.83rem", color: "#3a3020", fontStyle: "italic" as const, margin: 0, lineHeight: 1.5 },
+  optLabel: {
+    fontSize: "0.9rem",
+    fontWeight: "700" as const,
+    color: "#18181a",
+  },
+  optDesc: {
+    fontSize: "0.82rem",
+    color: "#3f3f39",
+    textAlign: "center" as const,
+    lineHeight: 1.08,
+  },
+  optMeta: { fontSize: "0.72rem", color: "#5f5f57", marginTop: "0rem" },
+  empty: {
+    color: "#8a8a80",
+    textAlign: "center" as const,
+    margin: 0,
+    fontSize: "0.875rem",
+  },
+  feedbackCard: {
+    background: "#edf8ed",
+    border: "1px solid #9ac89a",
+    borderRadius: 10,
+    padding: "0.75rem 0.875rem",
+  },
+  feedbackHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "0.4rem",
+  },
+  feedbackTitle: {
+    fontSize: "0.65rem",
+    color: "#1d6b1d",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.08em",
+    fontWeight: "700" as const,
+  },
+  feedbackLine: {
+    fontSize: "0.82rem",
+    color: "#1a4a1a",
+    lineHeight: 1.55,
+    margin: "0.15rem 0",
+  },
+  dismissBtn: {
+    background: "transparent",
+    border: "none",
+    color: "#9a9a90",
+    cursor: "pointer",
+    fontSize: "1.1rem",
+    lineHeight: 1,
+    padding: 0,
+  },
+  headlineCard: {
+    background: "#fffef5",
+    border: "1px solid #e8e0c0",
+    borderRadius: 10,
+    padding: "0.7rem 0.875rem",
+  },
+  headlineLabel: {
+    fontSize: "0.66rem",
+    color: "#7a5f1a",
+    letterSpacing: "0.08em",
+    display: "block",
+    marginBottom: "0.25rem",
+    fontWeight: "700" as const,
+    textTransform: "uppercase" as const,
+  },
+  headlineText: {
+    fontSize: "0.83rem",
+    color: "#3a3020",
+    fontStyle: "italic" as const,
+    margin: 0,
+    lineHeight: 1.5,
+  },
   // Tab tip
   tipCard: {
-    display: "flex", alignItems: "flex-start", gap: "0.5rem",
-    background: "#fffbea", border: "1px solid #e8d878", borderRadius: 8,
-    padding: "0.55rem 0.75rem", fontSize: "0.78rem", color: "#5a4a10",
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "0.5rem",
+    background: "#fffbea",
+    border: "1px solid #e8d878",
+    borderRadius: 8,
+    padding: "0.55rem 0.75rem",
+    fontSize: "0.78rem",
+    color: "#5a4a10",
   },
   tipIcon: { flexShrink: 0, fontSize: "1rem", lineHeight: 1.3 },
   tipText: { flex: 1, lineHeight: 1.55 },
   tipDismiss: {
-    background: "transparent", border: "none", color: "#b0a060", cursor: "pointer",
-    fontSize: "1rem", lineHeight: 1, padding: 0, flexShrink: 0,
+    background: "transparent",
+    border: "none",
+    color: "#b0a060",
+    cursor: "pointer",
+    fontSize: "1rem",
+    lineHeight: 1,
+    padding: 0,
+    flexShrink: 0,
   },
   // Modal
   overlay: {
-    position: "fixed" as const, inset: 0, zIndex: 500,
-    background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "flex-end",
+    position: "fixed" as const,
+    inset: 0,
+    zIndex: 500,
+    background: "rgba(0,0,0,0.4)",
+    display: "flex",
+    alignItems: "flex-end",
   },
   modal: {
-    background: "#ffffff", width: "100%", maxHeight: "85vh",
-    borderRadius: "14px 14px 0 0", overflow: "hidden",
-    display: "flex", flexDirection: "column" as const,
+    background: "#ffffff",
+    width: "100%",
+    maxHeight: "85vh",
+    borderRadius: "14px 14px 0 0",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column" as const,
     boxShadow: "0 -4px 32px rgba(0,0,0,0.15)",
   },
   modalHeader: {
-    display: "flex", alignItems: "center", justifyContent: "space-between",
-    padding: "0.9rem 1.1rem", borderBottom: "1px solid #e8e4df", flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "0.9rem 1.1rem",
+    borderBottom: "1px solid #e8e4df",
+    flexShrink: 0,
   },
-  modalTitle: { fontSize: "1rem", fontWeight: "800" as const, color: "#18181a" },
+  modalTitle: {
+    fontSize: "1rem",
+    fontWeight: "800" as const,
+    color: "#18181a",
+  },
   modalClose: {
-    background: "transparent", border: "none", color: "#9a9a90",
-    fontSize: "1.5rem", cursor: "pointer", padding: 0, lineHeight: 1,
+    background: "transparent",
+    border: "none",
+    color: "#9a9a90",
+    fontSize: "1.5rem",
+    cursor: "pointer",
+    padding: 0,
+    lineHeight: 1,
   },
-  modalBody: { overflowY: "auto" as const, padding: "0.9rem 1.1rem", display: "flex", flexDirection: "column" as const, gap: "0.875rem" },
+  modalBody: {
+    overflowY: "auto" as const,
+    padding: "0.9rem 1.1rem",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "0.875rem",
+  },
   modalSection: { borderLeft: "3px solid #e2ddd6", paddingLeft: "0.75rem" },
-  modalSectionTitle: { fontSize: "0.8rem", fontWeight: "700" as const, color: "#18181a", margin: "0 0 0.3rem" },
-  modalText: { fontSize: "0.82rem", color: "#5a5a54", lineHeight: 1.6, margin: 0 },
-  queuedBanner: { background: "#edf8ed", border: "1px solid #9ac89a", borderRadius: 8, padding: "0.6rem 0.875rem", fontSize: "0.82rem", color: "#1d6b1d" },
+  modalSectionTitle: {
+    fontSize: "0.8rem",
+    fontWeight: "700" as const,
+    color: "#18181a",
+    margin: "0 0 0.3rem",
+  },
+  modalText: {
+    fontSize: "0.82rem",
+    color: "#5a5a54",
+    lineHeight: 1.6,
+    margin: 0,
+  },
+  queuedBanner: {
+    background: "#edf8ed",
+    border: "1px solid #9ac89a",
+    borderRadius: 8,
+    padding: "0.6rem 0.875rem",
+    fontSize: "0.82rem",
+    color: "#1d6b1d",
+  },
   queuedNote: { color: "#9a9a90", fontSize: "0.72rem" },
 } as const;

@@ -5,6 +5,7 @@ import { useGameState } from "../state/store";
 
 export default function WaitingScreen() {
   const state = useGameState();
+  const isFarmer = state.myRole === "farmer";
 
   return (
     <div style={s.root}>
@@ -20,6 +21,20 @@ export default function WaitingScreen() {
           <span style={s.dot} />
           <span style={{ ...s.dot, animationDelay: "0.3s" }} />
           <span style={{ ...s.dot, animationDelay: "0.6s" }} />
+        </div>
+
+        <div style={s.helpBlock}>
+          <p style={s.helpTitle}>Quick Tips Before Round 1</p>
+          <ul style={s.helpList}>
+            <li>Pick one action each cycle, then lock in.</li>
+            <li>If everyone locks in, the cycle resolves early.</li>
+            {isFarmer ? (
+              <li>Farmer flow: plant, harvest, then sell to build cash.</li>
+            ) : (
+              <li>Trader flow: watch bid/ask depth and time your entries.</li>
+            )}
+            <li>Aura builds over time, so save it for high-impact chaos.</li>
+          </ul>
         </div>
       </div>
       <style>{`
@@ -78,5 +93,26 @@ const s = {
     background: "#c8c4be",
     display: "inline-block",
     animation: "pulse 1.2s ease-in-out infinite",
+  },
+  helpBlock: {
+    marginTop: "1.2rem",
+    paddingTop: "0.9rem",
+    borderTop: "1px solid #ebe7e2",
+    textAlign: "left" as const,
+  },
+  helpTitle: {
+    margin: "0 0 0.45rem",
+    fontSize: "0.85rem",
+    color: "#4f4f48",
+    fontWeight: "700" as const,
+  },
+  helpList: {
+    margin: 0,
+    paddingLeft: "1rem",
+    color: "#6b6b63",
+    fontSize: "0.8rem",
+    lineHeight: 1.45,
+    display: "grid",
+    gap: "0.2rem",
   },
 } as const;

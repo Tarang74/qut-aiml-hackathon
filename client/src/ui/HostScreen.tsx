@@ -9,7 +9,6 @@ import { useGameState, useWsSend } from "../state/store";
 import type { GameEvent } from "../ws/protocol";
 import PriceChart from "./PriceChart";
 import { TICKER_HEIGHT } from "./NewsTicker";
-import QRCode from "./QRCode";
 
 function describeEvent(ev: GameEvent): string {
   switch (ev.kind) {
@@ -41,13 +40,51 @@ function describeEvent(ev: GameEvent): string {
 export default function HostScreen() {
   const state = useGameState();
   const send = useWsSend();
-  const price = parseFloat(state.price).toFixed(2);
+  const hasAutoStartedLobbyRef = useRef(false);
+  const priceNum = parseFloat(state.price);
+  const price = priceNum.toFixed(2);
   const isSummary = state.phase === "summary";
   const phase = `Cycle ${state.cycle}`;
+  const playerText = `${state.knownPlayers.length} player${state.knownPlayers.length !== 1 ? "s" : ""}`;
+  const joinText = `${playerText} (join using ${state.gameCode ?? "----"})`;
+  const hist = state.priceHistory.map(parseFloat).filter((n) => !isNaN(n));
+  const prev = hist.length >= 2 ? hist[hist.length - 2] : null;
+  const change = prev !== null ? priceNum - prev : 0;
+  const changePct = prev && prev !== 0 ? (change / prev) * 100 : 0;
+  const changeColor = prev === null ? "#6b6b63" : change >= 0 ? "#1d6b1d" : "#a03333";
+  const changeSign = change >= 0 ? "+" : "";
+  const returns = hist.slice(1).map((priceValue, index) => {
+    const prior = hist[index];
+    return prior !== 0 ? (priceValue - prior) / prior : 0;
+  });
+  const avgReturn = returns.length ? returns.reduce((sum, value) => sum + value, 0) / returns.length : 0;
+  const volatilityPct = returns.length
+    ? Math.sqrt(returns.reduce((sum, value) => sum + (value - avgReturn) ** 2, 0) / returns.length) * 100
+    : 0;
+  const strikeDepthMap = new Map<string, { bid: number; ask: number; total: number }>();
+  for (const positions of Object.values(state.playerOptionPositions)) {
+    for (const position of positions) {
+      const parsed = Number.parseFloat(position.strike);
+      const strike = Number.isFinite(parsed) ? parsed.toFixed(2) : position.strike;
+      const current = strikeDepthMap.get(strike) ?? { bid: 0, ask: 0, total: 0 };
+      if (position.long) {
+        current.bid += position.quantity;
+      } else {
+        current.ask += position.quantity;
+      }
+      current.total += position.quantity;
+      strikeDepthMap.set(strike, current);
+    }
+  }
+  const strikeRows = Array.from(strikeDepthMap.entries())
+    .sort((a, b) => {
+      if (b[1].total !== a[1].total) return b[1].total - a[1].total;
+      return Number.parseFloat(b[0]) - Number.parseFloat(a[0]);
+    })
+    .slice(0, 3);
 
   // Local countdown — mirrors state.secondsRemaining but ticks every 1s locally
   // so the display doesn't stutter waiting for server messages.
-  const [showQR, setShowQR] = useState(true);
   const [localSecs, setLocalSecs] = useState<number | null>(null);
   useEffect(() => {
     // Only tick during a live decision phase; hide before game starts or when paused.
@@ -74,6 +111,19 @@ export default function HostScreen() {
   const sendRef = useRef(send);
   useEffect(() => { sendRef.current = send; }, [send]);
 
+  // Entering /host during lobby should immediately start the match.
+  useEffect(() => {
+    if (state.phase !== "lobby") {
+      hasAutoStartedLobbyRef.current = false;
+      return;
+    }
+    if (hasAutoStartedLobbyRef.current) {
+      return;
+    }
+    hasAutoStartedLobbyRef.current = true;
+    send({ type: "admin", command: { cmd: "start_game" } });
+  }, [send, state.phase]);
+
   useEffect(() => {
     if (autoCycle && state.phase === "summary") {
       setAutoCountdown(5);
@@ -94,10 +144,6 @@ export default function HostScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoCycle, state.phase]);
 
-  function startGame() {
-    send({ type: "admin", command: { cmd: "start_game" } });
-  }
-
   function endGame() {
     send({ type: "admin", command: { cmd: "end_game" } });
   }
@@ -115,82 +161,72 @@ export default function HostScreen() {
       <div style={styles.header}>
         {/* Left: logo + phase/buttons */}
         <div style={styles.headerLeft}>
-          <span style={styles.logoText}>Aura Farmers</span>
+          <span style={styles.logoText}>🌽 Aura Farmers</span>
           <div style={styles.headerButtons}>
             {state.phase === "lobby" ? (
               <>
-                <button style={styles.startBtn} onClick={startGame}>Start Game</button>
-                <span style={styles.playerCount}>
-                  {state.knownPlayers.length} player{state.knownPlayers.length !== 1 ? "s" : ""}
-                </span>
+                <div style={styles.joinHintRow}>
+                  <span style={styles.phasePlayers}>{joinText}</span>
+                </div>
               </>
             ) : (
-              <span style={{ ...styles.phase, ...(state.paused ? { color: "#c8a830", fontWeight: 700 } : {}) }}>
-                {state.paused ? "⏸ PAUSED" : phase}
-              </span>
+              <div style={styles.phaseBlock}>
+                <span style={{ ...styles.phase, ...(state.paused ? { color: "#c8a830", fontWeight: 700 } : {}) }}>
+                  {state.paused ? "⏸ PAUSED" : phase}
+                </span>
+                <div style={styles.joinHintRow}>
+                  <span style={styles.phasePlayers}>{joinText}</span>
+                </div>
+              </div>
             )}
           </div>
         </div>
 
-        {/* Center: QR toggle */}
-        <div style={{ position: "relative" as const, flexShrink: 0 }}>
-          <button style={styles.qrToggleBtn} onClick={() => setShowQR(v => !v)}>
-            {state.gameCode ?? "—"}
-          </button>
-          {showQR && (
-            <div style={styles.qrDropdown}>
-              <QRCode value={`${window.location.origin}/${state.gameCode ?? ""}`} style={{ display: "block" }} />
-            </div>
-          )}
-        </div>
-
         {/* Right: controls */}
         <div style={styles.headerRight}>
-          {state.phase !== "lobby" && (
-            <div style={styles.rightBtnGroup}>
-              <div style={styles.rightBtnRow}>
-                {isSummary ? (
-                  <>
-                    <button style={styles.continueBtn} onClick={continueGame}>Continue →</button>
-                    <button
-                      style={{ ...styles.autoBtn, ...(autoCycle ? styles.autoBtnOn : {}) }}
-                      onClick={() => setAutoCycle(v => !v)}
-                    >
-                      {autoCycle && autoCountdown !== null ? `Auto ${autoCountdown}s` : "Auto"}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      style={{
-                        ...styles.pauseBtn,
-                        ...(state.paused
-                          ? { background: "#c8a830", border: "2px solid #c8a830", color: "#ffffff", fontWeight: 700 }
-                          : {}),
-                      }}
-                      onClick={togglePause}
-                    >
-                      {state.paused ? "▶ Resume" : "⏸ Pause"}
-                    </button>
-                    <button
-                      style={{ ...styles.autoBtn, ...(autoCycle ? styles.autoBtnOn : {}) }}
-                      onClick={() => setAutoCycle(v => !v)}
-                    >
-                      Auto
-                    </button>
-                  </>
-                )}
-              </div>
-              <button style={styles.endBtn} onClick={endGame}>End Game</button>
-              <div style={styles.secsRow}>
-                <button style={styles.secsAdj} onClick={() => adjustCycleSecs(-5)}>−5</button>
-                <button style={styles.secsAdj} onClick={() => adjustCycleSecs(-1)}>−1</button>
-                <span style={styles.secsLabel}>{cycleSecs}s</span>
-                <button style={styles.secsAdj} onClick={() => adjustCycleSecs(1)}>+1</button>
-                <button style={styles.secsAdj} onClick={() => adjustCycleSecs(5)}>+5</button>
-              </div>
+          <div style={styles.rightBtnGroup}>
+            <div style={styles.rightBtnRow}>
+              {isSummary ? (
+                <>
+                  <button style={styles.continueBtn} onClick={continueGame}>Continue</button>
+                  <button
+                    style={{ ...styles.autoBtn, ...(autoCycle ? styles.autoBtnOn : {}) }}
+                    onClick={() => setAutoCycle(v => !v)}
+                  >
+                    {autoCycle && autoCountdown !== null ? `Auto ${autoCountdown}s` : "Auto"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    style={{
+                      ...styles.pauseBtn,
+                      ...(state.paused
+                        ? { background: "#c8a830", border: "2px solid #c8a830", color: "#ffffff", fontWeight: 700 }
+                        : {}),
+                    }}
+                    onClick={togglePause}
+                  >
+                    {state.paused ? "Resume" : "Pause"}
+                  </button>
+                  <button
+                    style={{ ...styles.autoBtn, ...(autoCycle ? styles.autoBtnOn : {}) }}
+                    onClick={() => setAutoCycle(v => !v)}
+                  >
+                    Auto
+                  </button>
+                </>
+              )}
+              <button style={styles.endBtn} onClick={endGame}>End</button>
             </div>
-          )}
+            <div style={styles.secsRow}>
+              <button style={styles.secsAdj} onClick={() => adjustCycleSecs(-5)}>−5</button>
+              <button style={styles.secsAdj} onClick={() => adjustCycleSecs(-1)}>−1</button>
+              <span style={styles.secsLabel}>{cycleSecs}s</span>
+              <button style={styles.secsAdj} onClick={() => adjustCycleSecs(1)}>+1</button>
+              <button style={styles.secsAdj} onClick={() => adjustCycleSecs(5)}>+5</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -199,35 +235,55 @@ export default function HostScreen() {
 
       {/* ── Price + chart ─────────────────────────────────────────────────── */}
       <div style={styles.priceCard}>
-        <div style={styles.priceLine}>
-          <div style={{ flexShrink: 0, minWidth: 0 }}>
-            <p style={styles.priceLabel}>CORNCO</p>
-            <p style={styles.priceValue}>${price}</p>
+        <div style={styles.marketTopRow}>
+          <div style={styles.marketLeftGroup}>
+            <div style={styles.marketPriceBlock}>
+              <span style={styles.priceLabel}>CORNCO</span>
+              <span style={styles.priceValue}>${price}</span>
+            </div>
+            <div style={{ ...styles.priceChange, color: changeColor }}>
+              {changeSign}{change.toFixed(2)} ({changeSign}{changePct.toFixed(2)}%)
+            </div>
           </div>
-          <div style={styles.marketMini}>
-            {(() => {
-              const hist = state.priceHistory.map(parseFloat).filter(n => !isNaN(n));
-              const hi = hist.length ? fmtNum(Math.max(...hist)) : "—";
-              const lo = hist.length ? fmtNum(Math.min(...hist)) : "—";
-              return (
-                <>
-                  <MiniStat label="High" value={`$${hi}`} color="#1d6b1d" />
-                  <MiniStat label="Low"  value={`$${lo}`} color="#7a1a1a" />
-                  <MiniStat label="Bid"  value={String(state.bidDepth)} />
-                  <MiniStat label="Ask"  value={String(state.askDepth)} />
-                  <MiniStat label="Vol"  value={String(state.cycleVolume)} />
-                  <MiniStat label="Cycle" value={String(state.cycle)} />
-                  {state.phase !== "lobby" && (
-                    <MiniStat label="Players" value={String(state.knownPlayers.length)} />
-                  )}
-                </>
-              );
-            })()}
+
+          <div style={styles.marketDepthBlock}>
+            <div style={styles.depthHeaderRow}>
+              <span style={styles.depthColStrike}>Strike</span>
+              <span style={styles.depthColNum}>Bid</span>
+              <span style={styles.depthColNum}>Ask</span>
+            </div>
+            {strikeRows.length === 0 ? (
+              <div style={styles.depthEmptyRow}>
+                <span style={styles.depthColStrike}>--</span>
+                <span style={styles.depthColNum}>0</span>
+                <span style={styles.depthColNum}>0</span>
+              </div>
+            ) : (
+              strikeRows.map(([strike, depth]) => (
+                <div key={strike} style={styles.depthDataRow}>
+                  <span style={styles.depthColStrike}>{strike}</span>
+                  <span style={styles.depthColNum}>{depth.bid}</span>
+                  <span style={styles.depthColNum}>{depth.ask}</span>
+                </div>
+              ))
+            )}
+            <div style={styles.depthTotalsRow}>
+              <span style={styles.depthColStrike}>Book</span>
+              <span style={styles.depthColNum}>{state.bidDepth}</span>
+              <span style={styles.depthColNum}>{state.askDepth}</span>
+            </div>
           </div>
         </div>
+
+        <div style={styles.graphMetaRow}>
+          <span style={styles.volumeText}>Volume this cycle {state.cycleVolume}</span>
+          <span style={styles.metaDivider} />
+          <span style={styles.volumeText}>Volatility {volatilityPct.toFixed(1)}%</span>
+        </div>
+
         <div style={styles.chartRow}>
           <div style={{ ...styles.chartBox, flex: 1 }}>
-            <PriceChart history={state.priceHistory} />
+            <PriceChart history={state.priceHistory} volumeHistory={state.volumeHistory} />
           </div>
         </div>
       </div>
@@ -332,21 +388,6 @@ function MilestoneSummary() {
   );
 }
 
-function MiniStat({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "center", flex: "1 1 0", minWidth: 0 }}>
-      <span style={{ fontSize: "0.9rem", color: "#8a8a80", letterSpacing: "0.06em", textTransform: "uppercase" as const, fontWeight: 600, whiteSpace: "nowrap" as const }}>{label}</span>
-      <span style={{ fontSize: "1.75rem", fontWeight: "700" as const, color: color ?? "#3a3a36", marginTop: 2, whiteSpace: "nowrap" as const }}>{value}</span>
-    </div>
-  );
-}
-
-function fmtNum(n: number): string {
-  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(n) >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
-  return n.toFixed(2);
-}
-
 const styles = {
   root: {
     display: "flex",
@@ -441,14 +482,49 @@ const styles = {
     fontWeight: 600,
     lineHeight: 1,
   },
+  phaseBlock: {
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "flex-start",
+    minWidth: 0,
+  },
   phase: { color: "#5a5a54", fontSize: "1.15rem", fontWeight: 500, flex: 1, minWidth: 0 },
+  phasePlayers: {
+    fontSize: "0.85rem",
+    color: "#8a8a80",
+    fontWeight: 600,
+    lineHeight: 1.1,
+    marginTop: "0.15rem",
+  },
+  joinHintRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.55rem",
+    flexWrap: "wrap" as const,
+    marginTop: "0.1rem",
+  },
+  codeWrap: {
+    position: "relative" as const,
+  },
+  inlineCodeBtn: {
+    background: "transparent",
+    border: "1px solid #d1cbc3",
+    borderRadius: 999,
+    padding: "0.15rem 0.55rem",
+    fontSize: "0.78rem",
+    color: "#5a5a54",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontWeight: 600,
+    letterSpacing: "0.01em",
+  },
   startBtn: {
     background: "#1d6b1d",
     border: "none",
     color: "#ffffff",
-    fontSize: "1.2rem",
+    fontSize: "0.9rem",
     fontWeight: "700" as const,
-    padding: "0.8rem 2.4rem",
+    padding: "0.4rem 0.8rem",
     borderRadius: 8,
     cursor: "pointer",
     flexShrink: 0,
@@ -458,9 +534,9 @@ const styles = {
     background: "transparent",
     border: "2px solid #c8b060",
     color: "#7a5010",
-    fontSize: "1.2rem",
+    fontSize: "0.95rem",
     fontWeight: 600,
-    padding: "0.75rem 0",
+    padding: "0.58rem 1rem",
     borderRadius: 8,
     cursor: "pointer",
     flex: 1,
@@ -470,9 +546,9 @@ const styles = {
     background: "transparent",
     border: "2px solid #8ab08a",
     color: "#3a6a3a",
-    fontSize: "1.2rem",
+    fontSize: "0.95rem",
     fontWeight: 600,
-    padding: "0.75rem 0",
+    padding: "0.58rem 1rem",
     borderRadius: 8,
     cursor: "pointer",
     flex: 1,
@@ -487,23 +563,24 @@ const styles = {
     background: "transparent",
     border: "2px solid #c89090",
     color: "#7a1a1a",
-    fontSize: "1.2rem",
+    fontSize: "0.95rem",
     fontWeight: 600,
-    padding: "0.75rem 0",
+    padding: "0.58rem 1rem",
     borderRadius: 8,
     cursor: "pointer",
-    width: "100%",
+    flex: 1,
     whiteSpace: "nowrap" as const,
   },
   rightBtnGroup: {
     display: "flex",
     flexDirection: "column" as const,
     gap: "0.5rem",
-    width: "16rem",
+    width: "auto",
+    minWidth: "20rem",
   },
   rightBtnRow: {
     display: "flex",
-    gap: "0.5rem",
+    gap: "0.55rem",
   },
   secsRow: {
     display: "flex",
@@ -540,22 +617,22 @@ const styles = {
     gap: "1rem",
     alignItems: "stretch",
   },
-  qrToggleBtn: {
-    background: "transparent",
-    border: "1px solid #d1cbc3",
-    borderRadius: 6,
-    padding: "0.3rem 0.8rem",
-    fontSize: "0.9rem",
-    color: "#5a5a54",
-    cursor: "pointer",
-    fontFamily: "inherit",
-    fontWeight: 600,
-  },
   qrDropdown: {
     position: "absolute" as const,
     top: "calc(100% + 6px)",
     left: "50%",
     transform: "translateX(-50%)",
+    background: "#ffffff",
+    border: "1px solid #e2ddd6",
+    borderRadius: 8,
+    padding: "0.4rem",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+    zIndex: 20,
+  },
+  qrDropdownLeft: {
+    position: "absolute" as const,
+    top: "calc(100% + 6px)",
+    left: 0,
     background: "#ffffff",
     border: "1px solid #e2ddd6",
     borderRadius: 8,
@@ -596,18 +673,117 @@ const styles = {
     background: "#ffffff",
     border: "1px solid #e2ddd6",
     borderRadius: 10,
-    padding: "1.1rem 1.25rem",
+    padding: "0.7rem 0.9rem 0.85rem",
   },
-  priceLine: {
+  marketTopRow: {
     display: "flex",
-    alignItems: "flex-start",
+    alignItems: "flex-end",
     flexWrap: "wrap" as const,
-    gap: "1.5rem",
-    marginBottom: "1.5rem",
+    gap: "0.9rem 1.2rem",
+    marginBottom: "0.35rem",
     minWidth: 0,
   },
-  priceLabel: { margin: 0, color: "#8a8a80", fontSize: "1rem", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase" as const },
-  priceValue: { margin: "0.2rem 0 0", fontSize: "clamp(2.5rem, 5vw, 6rem)", fontWeight: "800" as const, color: "#1d6b1d", lineHeight: 1 },
+  marketLeftGroup: {
+    display: "flex",
+    alignItems: "flex-end",
+    gap: "0.85rem",
+    minWidth: 0,
+  },
+  marketPriceBlock: {
+    display: "flex",
+    flexDirection: "column" as const,
+    width: "fit-content",
+  },
+  priceLabel: { margin: 0, color: "#67675f", fontSize: "1rem", fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase" as const },
+  priceValue: { margin: "0.2rem 0 0", fontSize: "clamp(2.5rem, 5vw, 6rem)", fontWeight: "800" as const, color: "#18181a", lineHeight: 1 },
+  priceChange: {
+    fontSize: "1.14rem",
+    fontWeight: 700,
+    lineHeight: 1.1,
+    marginBottom: "0.45rem",
+    whiteSpace: "nowrap" as const,
+    textAlign: "left" as const,
+  },
+  marketDepthBlock: {
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "stretch",
+    gap: "0.25rem",
+    marginBottom: "0.15rem",
+    marginLeft: "auto",
+    marginRight: "58px",
+    justifyContent: "flex-start",
+    minWidth: "13rem",
+  },
+  depthHeaderRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr 3.2rem 3.2rem",
+    columnGap: "0.6rem",
+    fontSize: "0.68rem",
+    color: "#6f6f66",
+    letterSpacing: "0.09em",
+    textTransform: "uppercase" as const,
+    fontWeight: 700,
+    lineHeight: 1.1,
+  },
+  depthDataRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr 3.2rem 3.2rem",
+    columnGap: "0.6rem",
+    alignItems: "baseline",
+    fontSize: "1rem",
+    color: "#3a3a36",
+    fontWeight: 700,
+    lineHeight: 1.15,
+  },
+  depthEmptyRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr 3.2rem 3.2rem",
+    columnGap: "0.6rem",
+    alignItems: "baseline",
+    fontSize: "1rem",
+    color: "#b0aea8",
+    fontWeight: 700,
+    lineHeight: 1.15,
+  },
+  depthTotalsRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr 3.2rem 3.2rem",
+    columnGap: "0.6rem",
+    alignItems: "baseline",
+    fontSize: "0.86rem",
+    color: "#6b6b63",
+    fontWeight: 700,
+    borderTop: "1px solid #e6e2db",
+    paddingTop: "0.2rem",
+    marginTop: "0.1rem",
+  },
+  depthColStrike: {
+    textAlign: "left" as const,
+    fontVariantNumeric: "tabular-nums",
+  },
+  depthColNum: {
+    textAlign: "right" as const,
+    fontVariantNumeric: "tabular-nums",
+  },
+  graphMetaRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    marginBottom: "0.2rem",
+    gap: "0.55rem",
+  },
+  volumeText: {
+    fontSize: "0.86rem",
+    color: "#5f5f57",
+    fontWeight: 800,
+  },
+  metaDivider: {
+    width: 1,
+    height: "0.95rem",
+    background: "#e0dbd2",
+    flexShrink: 0,
+  },
   countdownOverlay: {
     position: "fixed" as const,
     inset: 0,
@@ -635,14 +811,10 @@ const styles = {
     borderRadius: 10,
     padding: "1rem 1.25rem",
   },
-  cardTitle: { margin: "0 0 1rem", fontSize: "0.85rem", color: "#8a8a80", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const },
+  cardTitle: { margin: "0 0 1rem", fontSize: "0.85rem", color: "#67675f", fontWeight: 800, letterSpacing: "0.09em", textTransform: "uppercase" as const },
   empty: { color: "#9a9a90", fontSize: "1.1rem", margin: 0 },
   headline: { margin: 0, color: "#2a2a26", fontStyle: "italic" as const, fontSize: "1.2rem", lineHeight: 1.7 },
   summary: { margin: 0, color: "#3a3a36", fontSize: "1.05rem", lineHeight: 1.8, whiteSpace: "pre-wrap" as const },
-  marketMini: {
-    display: "flex", flexWrap: "wrap" as const, gap: "1rem 1.5rem",
-    alignItems: "flex-start", flex: 1, minWidth: 0,
-  },
   eventRow: {
     margin: "0 0 0.5rem",
     fontSize: "1rem",
@@ -652,17 +824,18 @@ const styles = {
     lineHeight: 1.5,
   },
   continueBtn: {
-    background: "#1d6b1d",
-    border: "none",
-    color: "#ffffff",
-    fontSize: "1.2rem",
-    fontWeight: "700" as const,
-    padding: "0.75rem 0",
+    background: "transparent",
+    border: "2px solid #8ab08a",
+    color: "#3a6a3a",
+    fontSize: "0.95rem",
+    fontWeight: 600,
+    padding: "0.58rem 1rem",
     borderRadius: 8,
     cursor: "pointer",
-    flex: 1,
+    flex: 1.25,
+    minWidth: "8.5rem",
     whiteSpace: "nowrap" as const,
-    letterSpacing: "0.02em",
+    letterSpacing: "normal",
   },
   milestoneCard: {
     background: "#fffdf5",

@@ -48,6 +48,7 @@ export default function CreateScreen() {
   function claimHostLobby(code: string, navigateToHost: boolean) {
     fetch("/api/session/host", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ game_code: code }),
     })
@@ -115,6 +116,7 @@ export default function CreateScreen() {
                 // Register host session on server so cookie is set and /host survives reload.
                 await fetch("/api/session/host", {
                   method: "POST",
+                  credentials: "include",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ game_code: local.code }),
                 });
@@ -124,6 +126,7 @@ export default function CreateScreen() {
                 // Start the match from create flow so /host lands in active game state.
                 await fetch("/api/session/start", {
                   method: "POST",
+                  credentials: "include",
                 });
 
                 // Force a fresh WS handshake so host-only channels/commands are active immediately.

@@ -116,7 +116,7 @@ pub enum ServerMsg {
         options: Vec<OptionPosition>,
     },
 
-    // ── Per-player AI coaching (fire-and-forget after each cycle) ─────────────
+    // ── Per-player AI coaching (checkpoint cadence: every 5 cycles) ───────────
     /// Personalised financial education tip for one player.
     /// Broadcast to all; each client only displays their own.
     PlayerFeedback {

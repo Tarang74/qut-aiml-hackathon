@@ -48,7 +48,12 @@ async fn call_api(req: &AnthropicRequest, api_key: &str) -> Result<String, Strin
         .map_err(|e| e.to_string())?;
 
     if !resp.status().is_success() {
-        return Err(format!("API error: {}", resp.status()));
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "<failed to read error body>".to_string());
+        return Err(format!("API error: {status} — {body}"));
     }
 
     let body: AnthropicResponse = resp.json().await.map_err(|e| e.to_string())?;
@@ -71,24 +76,26 @@ pub async fn generate_feedback(
     aura: f64,
     options_count: usize,
     price: f64,
-    events: &[GameEvent],
+    recent_events: &[(u64, GameEvent)],
     cycle: u64,
     api_key: &str,
 ) -> Result<String, String> {
-    let event_summary: String = events
+    let event_summary: String = recent_events
         .iter()
-        .take(6)
-        .map(|e| format!("{e:?}"))
+        .rev()
+        .take(20)
+        .rev()
+        .map(|(c, e)| format!("[Cycle {c}] {e:?}"))
         .collect::<Vec<_>>()
-        .join("; ");
+        .join("\n");
 
     let prompt = format!(
         "You are a financial markets educator coaching a player in Aura Farmers, a corn-economy trading game.\n\
 Player: {name} (role: {role})\n\
 Portfolio at end of cycle {cycle}: ${cash:.0} cash, {shares} shares, ${net_worth:.0} net worth, \
 {aura:.0} aura, {options_count} active options\n\
-CornCo price this cycle: ${price:.2}\n\
-Events this cycle: {event_summary}\n\n\
+CornCo price now: ${price:.2}\n\
+Recent events (last 5 cycles):\n{event_summary}\n\n\
 Give exactly 2–3 bullet points of specific, actionable financial education feedback. \
 Reference real finance concepts (risk management, market timing, diversification, options hedging, \
 supply/demand signals, inventory management). Be direct and concrete about what this player should \
@@ -96,7 +103,7 @@ or should not have done given the information available. Under 90 words total. U
     );
 
     let req = AnthropicRequest {
-        model: "claude-haiku-4-5-20251001".to_string(),
+        model: "claude-3-5-haiku-latest".to_string(),
         max_tokens: 160,
         system: None,
         messages: vec![OwnedMessage {
@@ -130,7 +137,7 @@ Cycle: {cycle}. Corn price: ${price:.2}. Events: {event_summary}"
     );
 
     let req = AnthropicRequest {
-        model: "claude-haiku-4-5-20251001".to_string(),
+        model: "claude-3-5-haiku-latest".to_string(),
         max_tokens: 120,
         system: None,
         messages: vec![OwnedMessage {
@@ -142,7 +149,7 @@ Cycle: {cycle}. Corn price: ${price:.2}. Events: {event_summary}"
 }
 
 /// Generate a milestone recap covering the last N cycles — shown to all players at checkpoint pauses.
-/// Uses Sonnet with a longer timeout since users are actively waiting for it.
+/// Uses Haiku with a moderate timeout since users are actively waiting for it.
 pub async fn generate_milestone_summary(
     recent_events: &[(u64, crate::sim::events::GameEvent)],
     cycle: u64,
@@ -182,7 +189,7 @@ Be vivid and entertaining — players are watching this on a shared screen."
         .map_err(|e| e.to_string())?;
 
     let req = AnthropicRequest {
-        model: "claude-sonnet-4-6".to_string(),
+        model: "claude-3-5-haiku-latest".to_string(),
         max_tokens: 250,
         system: None,
         messages: vec![OwnedMessage {

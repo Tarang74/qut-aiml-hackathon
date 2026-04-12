@@ -34,6 +34,47 @@ fn send_targeted(
     }
 }
 
+fn fallback_milestone_summary(
+    cycle: u64,
+    standings: &[(String, rust_decimal::Decimal)],
+    llm_enabled: bool,
+) -> String {
+    let top = standings
+        .iter()
+        .take(3)
+        .enumerate()
+        .map(|(i, (name, nw))| format!("{}. {} (${nw:.0})", i + 1, name))
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    let source = if llm_enabled {
+        "AI recap unavailable this cycle"
+    } else {
+        "AI recap disabled (set ANTHROPIC_API_KEY)"
+    };
+
+    format!(
+        "Checkpoint cycle {cycle}. {source}. Current leaders: {}.",
+        if top.is_empty() {
+            "No standings yet".to_string()
+        } else {
+            top
+        }
+    )
+}
+
+fn fallback_feedback_text(cycle: u64, llm_enabled: bool) -> String {
+    if llm_enabled {
+        format!(
+            "• Checkpoint cycle {cycle}: AI coaching was unavailable this round.\n• Keep position sizing conservative and avoid all-in directional bets.\n• Hedge with options when your cashflow depends on one outcome."
+        )
+    } else {
+        format!(
+            "• Checkpoint cycle {cycle}: AI coaching is disabled.\n• Set ANTHROPIC_API_KEY on the server to enable personalised 5-cycle feedback.\n• Until then: prioritize risk management, diversification, and disciplined sizing."
+        )
+    }
+}
+
 /// Broadcast a full state snapshot and atomically replace the reconnect snapshot.
 fn broadcast_all_state(
     world: &World,
@@ -393,51 +434,6 @@ pub async fn run_loop(
                     }
                 });
             }
-
-            // ── Per-player coaching — targeted to the individual player ───────
-            let vol = world.realized_vol();
-            for player in world.players.values() {
-                let key = api_key.clone();
-                let player_id = player.id.0;
-                let name = player.name.clone();
-                let role = format!("{:?}", player.role);
-                let cash = player.portfolio.cash;
-                let shares = player.portfolio.shares;
-                let net_worth = player.portfolio.net_worth(world.price, world.cycle, vol);
-                let aura = player.aura;
-                let options_count = player.portfolio.options.len();
-                let price = world.price;
-                let evs = cycle_events.clone();
-                let cycle = world.cycle;
-                let psenders = personal_senders.clone();
-                tokio::spawn(async move {
-                    match crate::llm::narrator::generate_feedback(
-                        &name,
-                        &role,
-                        cash,
-                        shares,
-                        net_worth,
-                        aura,
-                        options_count,
-                        price,
-                        &evs,
-                        cycle,
-                        &key,
-                    )
-                    .await
-                    {
-                        Ok(tips) => {
-                            if let Ok(json) = serde_json::to_string(&ServerMsg::PlayerFeedback {
-                                player_id,
-                                tips,
-                            }) {
-                                send_targeted(&psenders, player_id, Arc::new(json));
-                            }
-                        }
-                        Err(e) => tracing::warn!("feedback error for {name}: {e}"),
-                    }
-                });
-            }
         }
 
         if world.game_over {
@@ -468,44 +464,129 @@ pub async fn run_loop(
             );
             upsert_snapshot_cycle_phase(&snapshot, "summary", world.cycle, 0);
 
-            // Spawn a dedicated milestone recap — broadcast to all players.
-            if !api_key.is_empty() {
+            // Events from the last 5 cycles.
+            let cutoff = world.cycle.saturating_sub(5);
+            let recent: Vec<(u64, crate::sim::events::GameEvent)> = world
+                .event_log
+                .entries
+                .iter()
+                .filter(|(c, _)| *c > cutoff)
+                .cloned()
+                .collect();
+            // Player standings sorted by net worth descending.
+            let vol = world.realized_vol();
+            let mut standings: Vec<(String, rust_decimal::Decimal)> = world
+                .players
+                .values()
+                .map(|p| {
+                    (
+                        p.name.clone(),
+                        p.portfolio.net_worth(world.price, world.cycle, vol),
+                    )
+                })
+                .collect();
+            standings.sort_by(|a, b| b.1.cmp(&a.1));
+
+            // Always send a milestone summary so clients never hang on "Generating...".
+            if api_key.is_empty() {
+                let text = fallback_milestone_summary(world.cycle, &standings, false);
+                broadcast_msg(
+                    &broadcast_tx,
+                    &ServerMsg::MilestoneSummary {
+                        text,
+                        cycle: world.cycle,
+                    },
+                );
+            } else {
                 let tx2 = broadcast_tx.clone();
                 let key = api_key.clone();
                 let cycle = world.cycle;
                 let price = world.price;
-                // Events from the last 5 cycles.
-                let cutoff = cycle.saturating_sub(5);
-                let recent: Vec<(u64, crate::sim::events::GameEvent)> = world
-                    .event_log
-                    .entries
-                    .iter()
-                    .filter(|(c, _)| *c > cutoff)
-                    .cloned()
-                    .collect();
-                // Player standings sorted by net worth descending.
-                let vol = world.realized_vol();
-                let mut standings: Vec<(String, rust_decimal::Decimal)> = world
-                    .players
-                    .values()
-                    .map(|p| {
-                        (
-                            p.name.clone(),
-                            p.portfolio.net_worth(world.price, world.cycle, vol),
-                        )
-                    })
-                    .collect();
-                standings.sort_by(|a, b| b.1.cmp(&a.1));
+                let recent_for_summary = recent.clone();
+                let standings_for_fallback = standings.clone();
                 tokio::spawn(async move {
                     match crate::llm::narrator::generate_milestone_summary(
-                        &recent, cycle, price, &standings, &key,
+                        &recent_for_summary,
+                        cycle,
+                        price,
+                        &standings,
+                        &key,
                     )
                     .await
                     {
                         Ok(text) => {
                             broadcast_msg(&tx2, &ServerMsg::MilestoneSummary { text, cycle })
                         }
-                        Err(e) => tracing::warn!("milestone summary error: {e}"),
+                        Err(e) => {
+                            tracing::warn!("milestone summary error: {e}");
+                            let text =
+                                fallback_milestone_summary(cycle, &standings_for_fallback, true);
+                            broadcast_msg(&tx2, &ServerMsg::MilestoneSummary { text, cycle });
+                        }
+                    }
+                });
+            }
+
+            // Per-player coaching only at checkpoints, using the last 5 cycles.
+            for player in world.players.values() {
+                let player_id = player.id.0;
+                let name = player.name.clone();
+                let role = format!("{:?}", player.role);
+                let cash = player.portfolio.cash;
+                let shares = player.portfolio.shares;
+                let net_worth = player.portfolio.net_worth(world.price, world.cycle, vol);
+                let aura = player.aura;
+                let options_count = player.portfolio.options.len();
+                let price = world.price;
+                let cycle = world.cycle;
+                let psenders = personal_senders.clone();
+
+                if api_key.is_empty() {
+                    let tips = fallback_feedback_text(cycle, false);
+                    if let Ok(json) =
+                        serde_json::to_string(&ServerMsg::PlayerFeedback { player_id, tips })
+                    {
+                        send_targeted(&psenders, player_id, Arc::new(json));
+                    }
+                    continue;
+                }
+
+                let key = api_key.clone();
+                let recent_for_player = recent.clone();
+                tokio::spawn(async move {
+                    match crate::llm::narrator::generate_feedback(
+                        &name,
+                        &role,
+                        cash,
+                        shares,
+                        net_worth,
+                        aura,
+                        options_count,
+                        price,
+                        &recent_for_player,
+                        cycle,
+                        &key,
+                    )
+                    .await
+                    {
+                        Ok(tips) => {
+                            if let Ok(json) = serde_json::to_string(&ServerMsg::PlayerFeedback {
+                                player_id,
+                                tips,
+                            }) {
+                                send_targeted(&psenders, player_id, Arc::new(json));
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("feedback error for {name}: {e}");
+                            let tips = fallback_feedback_text(cycle, true);
+                            if let Ok(json) = serde_json::to_string(&ServerMsg::PlayerFeedback {
+                                player_id,
+                                tips,
+                            }) {
+                                send_targeted(&psenders, player_id, Arc::new(json));
+                            }
+                        }
                     }
                 });
             }

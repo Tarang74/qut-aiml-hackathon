@@ -8,7 +8,6 @@ import { useEffect, useRef, useState } from "react";
 import { useGameState, useWsSend } from "../state/store";
 import type { GameEvent } from "../ws/protocol";
 import PriceChart from "./PriceChart";
-import { TICKER_HEIGHT } from "./NewsTicker";
 
 const AURA_TOP5_BONUSES = [50, 40, 30, 25, 20] as const;
 
@@ -461,7 +460,7 @@ const styles = {
     width: "100%",
     minHeight: "100vh",
     background: "#f5f3ef",
-    paddingTop: `calc(1.5rem + ${TICKER_HEIGHT}px)`,
+    paddingTop: "1.5rem",
   },
   logoText: {
     fontSize: "1.8rem",

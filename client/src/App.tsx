@@ -32,7 +32,7 @@ import WaitingScreen from "./ui/WaitingScreen";
 import SummaryScreen from "./ui/SummaryScreen";
 import DebriefScreen from "./ui/DebriefScreen";
 import WelcomeScreen from "./ui/WelcomeScreen";
-import NewsTicker from "./ui/NewsTicker";
+// import NewsTicker from "./ui/NewsTicker";
 import EmojiConfetti from "./ui/EmojiConfetti";
 import EventBanner from "./ui/EventBanner";
 
@@ -161,7 +161,7 @@ export default function App() {
       <GameDispatchContext.Provider value={dispatch}>
         <WsSendContext.Provider value={send}>
           <NavigateContext.Provider value={navigate}>
-            {state.isHost && route.page === "host" && <NewsTicker />}
+            {/* {state.isHost && route.page === "host" && <NewsTicker />} */}
             <EventBanner />
             <EmojiConfetti />
             {screen}

@@ -12,7 +12,6 @@ export default function WelcomeScreen() {
   return (
     <div style={s.root}>
       <div style={s.hero}>
-        <div style={s.graphic}>🌽🚜📈🔥💰</div>
         <h1 style={s.title}>🌽 Aura Farmers</h1>
         <p style={s.tagline}>
           Trade corn. Burn farms. Corner the market.<br />

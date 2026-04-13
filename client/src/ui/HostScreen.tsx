@@ -64,7 +64,6 @@ function describeEvent(ev: GameEvent): string {
 export default function HostScreen() {
   const state = useGameState();
   const send = useWsSend();
-  const hasAutoStartedLobbyRef = useRef(false);
   const priceNum = parseFloat(state.price);
   const price = priceNum.toFixed(2);
   const isSummary = state.phase === "summary";
@@ -127,18 +126,11 @@ export default function HostScreen() {
     sendRef.current = send;
   }, [send]);
 
-  // Entering /host during lobby should immediately start the match.
-  useEffect(() => {
-    if (state.phase !== "lobby") {
-      hasAutoStartedLobbyRef.current = false;
-      return;
-    }
-    if (hasAutoStartedLobbyRef.current) {
-      return;
-    }
-    hasAutoStartedLobbyRef.current = true;
-    send({ type: "admin", command: { cmd: "start_game" } });
-  }, [send, state.phase]);
+  // Auto-start intentionally removed: the "Start Match" button on CreateScreen
+  // calls /api/session/start (HTTP) before navigating to /host, so the game is
+  // already running by the time this component mounts. Auto-starting here would
+  // re-trigger on every host refresh/reconnect and could start a new game
+  // unexpectedly after a reset.
 
   useEffect(() => {
     if (autoCycle && state.phase === "summary") {

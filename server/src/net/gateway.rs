@@ -259,11 +259,14 @@ pub async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: O
         "ws disconnected"
     );
 
-    // Notify sim of disconnect — player stays in world for reconnect.
-    let _ = state
-        .action_tx
-        .send(InboundMsg::Disconnect { player_id })
-        .await;
+    // Notify sim of disconnect so the player is retained for reconnect.
+    // Hosts are not sim entities, so skip this for host connections.
+    if !is_host {
+        let _ = state
+            .action_tx
+            .send(InboundMsg::Disconnect { player_id })
+            .await;
+    }
 }
 
 /// Remove this connection's sender from the appropriate registry.

@@ -1436,7 +1436,7 @@ function GodTab({
   }> = [
     {
       label: "Great Harvest",
-      sub: "bumper = unusually big harvest",
+      sub: "unusually big harvest",
       cost: 50,
       action: { kind: "bumper_harvest" },
       color: "#e8f5e8",

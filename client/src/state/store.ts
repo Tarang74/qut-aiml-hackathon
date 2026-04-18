@@ -159,7 +159,8 @@ export type GameAction =
   // Clear the host flag (e.g. after game_reset so old sessions don't linger)
   | { type: "clear_host" }
   // Player voluntarily leaves the game (clears player identity, returns to join)
-  | { type: "leave_game" };
+  | { type: "leave_game" }
+;
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
 

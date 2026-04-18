@@ -227,11 +227,10 @@ pub async fn run_loop(
     game_code: Arc<Mutex<Option<String>>>,
     on_game_end: std::sync::Arc<dyn Fn() + Send + Sync>,
 ) {
-    let admin_context: Arc<Mutex<Vec<OwnedMessage>>> = Arc::new(Mutex::new(Vec::new()));
     tracing::info!("Sim loop started — waiting for host to start game");
 
-    // Clear the published game code and log. Called on reset and game-over so
-    // /api/lobby stops advertising the stale code while no game is accepting joins.
+    // Clear the published game code. Called on reset and game-over so /api/lobby
+    // stops advertising the stale code while no game is accepting joins.
     let clear_code = |reason: &str| {
         let mut lock = game_code.lock().unwrap();
         if let Some(ref code) = *lock {
@@ -240,381 +239,112 @@ pub async fn run_loop(
         *lock = None;
     };
 
-    'lobby: loop {
-        let Some(msg) = action_rx.recv().await else {
-            return;
-        };
-        if let actions::InboundMsg::Admin {
-            command: actions::AdminCommand::StartGame,
-        } = &msg
-        {
-            tracing::info!("Host started the game");
-            world.paused = false;
-            upsert_snapshot_pause_state(snapshot.as_ref(), false, world.cycle_duration_secs);
-            break 'lobby;
-        }
-        let reset = handle_inbound(&mut world, msg, &broadcast_tx, &snapshot);
-        if reset {
-            tracing::info!("Game reset by admin (in lobby)");
-            clear_code("reset in lobby");
-            on_game_end();
-            let cycle_secs = world.cycle_duration_secs;
-            world = World::new(seed);
-            world.cycle_duration_secs = cycle_secs;
-            admin_context.lock().unwrap().clear();
-            broadcast_msg(&broadcast_tx, &ServerMsg::GameReset {});
-        }
-    }
+    loop {
+        let admin_context: Arc<Mutex<Vec<OwnedMessage>>> = Arc::new(Mutex::new(Vec::new()));
 
-    'game: loop {
-        world.locked_in.clear();
-        world.phase = CyclePhase::Decision;
-        broadcast_msg(
-            &broadcast_tx,
-            &ServerMsg::CyclePhase {
-                phase: "decision".to_string(),
-                cycle: world.cycle,
-                seconds_remaining: world.cycle_duration_secs,
-            },
-        );
-        upsert_snapshot_cycle_phase(
-            &snapshot,
-            "decision",
-            world.cycle,
-            world.cycle_duration_secs,
-        );
-
-        let mut decision_end = Instant::now() + Duration::from_secs(world.cycle_duration_secs);
-        let deadline = sleep_until(decision_end);
-        tokio::pin!(deadline);
-        let mut paused_at: Option<Instant> = if world.paused {
-            deadline
-                .as_mut()
-                .reset(Instant::now() + Duration::from_secs(86400));
-            Some(Instant::now())
-        } else {
-            None
-        };
-
-        let mut reset_requested = false;
-        let mut all_locked_in = false;
-        loop {
-            tokio::select! {
-                msg = action_rx.recv() => {
-                    if let Some(msg) = msg {
-                        let was_paused = world.paused;
-                        reset_requested = handle_inbound(&mut world, msg, &broadcast_tx, &snapshot);
-                        all_locked_in = world.all_players_locked_in();
-                        if !was_paused && world.paused {
-                            paused_at = Some(Instant::now());
-                            deadline.as_mut().reset(Instant::now() + Duration::from_secs(86400));
-                        } else if was_paused && !world.paused {
-                            if let Some(at) = paused_at.take() {
-                                decision_end += at.elapsed();
-                                deadline.as_mut().reset(decision_end);
-                            }
-                            let secs_left = decision_end.duration_since(Instant::now()).as_secs();
-                            broadcast_msg(&broadcast_tx, &ServerMsg::CyclePhase {
-                                phase: "decision".to_string(),
-                                cycle: world.cycle,
-                                seconds_remaining: secs_left,
-                            });
-                            upsert_snapshot_cycle_phase(&snapshot, "decision", world.cycle, secs_left);
-                        }
-                    }
-                }
-                _ = &mut deadline => {
-                    if !world.paused { break; }
-                    deadline.as_mut().reset(Instant::now() + Duration::from_secs(86400));
-                }
-            }
-            if reset_requested || world.game_over || (!world.paused && all_locked_in) {
-                if all_locked_in {
-                    tracing::info!("All players locked in — advancing cycle early");
-                }
-                break;
-            }
-        }
-
-        if reset_requested {
-            tracing::info!(
-                "Game reset by admin — cycle {} with {} players",
-                world.cycle,
-                world.players.len()
-            );
-            clear_code("reset");
-            on_game_end();
-            let cycle_secs = world.cycle_duration_secs;
-            world = World::new(seed);
-            world.cycle_duration_secs = cycle_secs;
-            admin_context.lock().unwrap().clear();
-            broadcast_msg(&broadcast_tx, &ServerMsg::GameReset {});
-            continue 'game;
-        }
-
-        if world.game_over {
-            tracing::info!(
-                "Game over — cycle {} with {} players, reason: {:?}",
-                world.cycle,
-                world.players.len(),
-                world.game_over_reason
-            );
-            clear_code("game over");
-            on_game_end();
-            let stats = world.compute_debrief();
-            broadcast_msg(&broadcast_tx, &ServerMsg::Debrief { stats });
-            spawn_debrief_narrative(&world, broadcast_tx.clone(), api_key.clone());
-            break 'game;
-        }
-
-        world.phase = CyclePhase::Resolving;
-        broadcast_msg(
-            &broadcast_tx,
-            &ServerMsg::CyclePhase {
-                phase: "resolving".to_string(),
-                cycle: world.cycle,
-                seconds_remaining: 0,
-            },
-        );
-        upsert_snapshot_cycle_phase(&snapshot, "resolving", world.cycle, 0);
-
-        let cycle_events = world.resolve_cycle();
-        broadcast_all_state(&world, &broadcast_tx, &snapshot, &cycle_events);
-
-        if !api_key.is_empty() {
-            // ── Per-cycle narrator headline (fire-and-forget, Haiku) ──────────
+        'lobby: loop {
+            let Some(msg) = action_rx.recv().await else {
+                return;
+            };
+            if let actions::InboundMsg::Admin {
+                command: actions::AdminCommand::StartGame,
+            } = &msg
             {
-                let tx2 = broadcast_tx.clone();
-                let key = api_key.clone();
-                let evs = cycle_events.clone();
-                let cycle = world.cycle;
-                let price = world.price;
-                tokio::spawn(async move {
-                    match crate::llm::narrator::generate(&evs, cycle, price, &key).await {
-                        Ok(text) => broadcast_msg(&tx2, &ServerMsg::Headline { text, cycle }),
-                        Err(e) => tracing::warn!("narrator error: {e}"),
-                    }
-                });
+                tracing::info!("Host started the game");
+                world.paused = false;
+                upsert_snapshot_pause_state(snapshot.as_ref(), false, world.cycle_duration_secs);
+                break 'lobby;
             }
-
-            // ── Per-cycle admin summary — targeted to host connections only ───
-            {
-                let key = api_key.clone();
-                let evs = cycle_events.clone();
-                let cycle = world.cycle;
-                let price = world.price;
-                let player_count = world.players.len();
-                let ctx_arc = admin_context.clone();
-                let prior = admin_context.lock().unwrap().clone();
-                let hsenders = host_senders.clone();
-                tokio::spawn(async move {
-                    match crate::llm::narrator::generate_admin_summary(
-                        &evs,
-                        cycle,
-                        price,
-                        player_count,
-                        prior,
-                        &key,
-                    )
-                    .await
-                    {
-                        Ok((text, new_ctx)) => {
-                            *ctx_arc.lock().unwrap() = new_ctx;
-                            if let Ok(json) =
-                                serde_json::to_string(&ServerMsg::AdminSummary { text, cycle })
-                            {
-                                let arc = Arc::new(json);
-                                let senders = hsenders.lock().unwrap();
-                                for s in senders.iter() {
-                                    let _ = s.send(arc.clone());
-                                }
-                            }
-                        }
-                        Err(e) => tracing::warn!("admin summary error: {e}"),
-                    }
-                });
+            let reset = handle_inbound(&mut world, msg, &broadcast_tx, &snapshot);
+            if reset {
+                tracing::info!("Game reset by admin (in lobby)");
+                clear_code("reset in lobby");
+                on_game_end();
+                let cycle_secs = world.cycle_duration_secs;
+                world = World::new(seed);
+                world.cycle_duration_secs = cycle_secs;
+                admin_context.lock().unwrap().clear();
+                broadcast_msg(&broadcast_tx, &ServerMsg::GameReset {});
             }
         }
 
-        if world.game_over {
-            tracing::info!(
-                "Game over — cycle {} with {} players, reason: {:?}",
-                world.cycle,
-                world.players.len(),
-                world.game_over_reason
-            );
-            clear_code("game over");
-            on_game_end();
-            let stats = world.compute_debrief();
-            broadcast_msg(&broadcast_tx, &ServerMsg::Debrief { stats });
-            spawn_debrief_narrative(&world, broadcast_tx.clone(), api_key.clone());
-            break 'game;
-        }
-
-        let is_milestone = world.cycle.is_multiple_of(5) && world.cycle > 0;
-        if is_milestone {
-            world.phase = CyclePhase::Summary;
+        'game: loop {
+            world.locked_in.clear();
+            world.phase = CyclePhase::Decision;
             broadcast_msg(
                 &broadcast_tx,
                 &ServerMsg::CyclePhase {
-                    phase: "summary".to_string(),
+                    phase: "decision".to_string(),
                     cycle: world.cycle,
-                    seconds_remaining: 0,
+                    seconds_remaining: world.cycle_duration_secs,
                 },
             );
-            upsert_snapshot_cycle_phase(&snapshot, "summary", world.cycle, 0);
+            upsert_snapshot_cycle_phase(
+                &snapshot,
+                "decision",
+                world.cycle,
+                world.cycle_duration_secs,
+            );
 
-            // Events from the last 5 cycles.
-            let cutoff = world.cycle.saturating_sub(5);
-            let recent: Vec<(u64, crate::sim::events::GameEvent)> = world
-                .event_log
-                .entries
-                .iter()
-                .filter(|(c, _)| *c > cutoff)
-                .cloned()
-                .collect();
-            // Player standings sorted by net worth descending.
-            let vol = world.realized_vol();
-            let mut standings: Vec<(String, rust_decimal::Decimal)> = world
-                .players
-                .values()
-                .map(|p| {
-                    (
-                        p.name.clone(),
-                        p.portfolio.net_worth(world.price, world.cycle, vol),
-                    )
-                })
-                .collect();
-            standings.sort_by(|a, b| b.1.cmp(&a.1));
-
-            // Always send a milestone summary so clients never hang on "Generating...".
-            if api_key.is_empty() {
-                let text = fallback_milestone_summary(world.cycle, &standings, false);
-                broadcast_msg(
-                    &broadcast_tx,
-                    &ServerMsg::MilestoneSummary {
-                        text,
-                        cycle: world.cycle,
-                    },
-                );
+            let mut decision_end = Instant::now() + Duration::from_secs(world.cycle_duration_secs);
+            let deadline = sleep_until(decision_end);
+            tokio::pin!(deadline);
+            let mut paused_at: Option<Instant> = if world.paused {
+                deadline
+                    .as_mut()
+                    .reset(Instant::now() + Duration::from_secs(86400));
+                Some(Instant::now())
             } else {
-                let tx2 = broadcast_tx.clone();
-                let key = api_key.clone();
-                let cycle = world.cycle;
-                let price = world.price;
-                let recent_for_summary = recent.clone();
-                let standings_for_fallback = standings.clone();
-                tokio::spawn(async move {
-                    match crate::llm::narrator::generate_milestone_summary(
-                        &recent_for_summary,
-                        cycle,
-                        price,
-                        &standings,
-                        &key,
-                    )
-                    .await
-                    {
-                        Ok(text) => {
-                            broadcast_msg(&tx2, &ServerMsg::MilestoneSummary { text, cycle })
-                        }
-                        Err(e) => {
-                            tracing::warn!("milestone summary error: {e}");
-                            let text =
-                                fallback_milestone_summary(cycle, &standings_for_fallback, true);
-                            broadcast_msg(&tx2, &ServerMsg::MilestoneSummary { text, cycle });
-                        }
-                    }
-                });
-            }
+                None
+            };
 
-            // Per-player coaching only at checkpoints, using the last 5 cycles.
-            for player in world.players.values() {
-                let player_id = player.id.0;
-                let name = player.name.clone();
-                let role = format!("{:?}", player.role);
-                let cash = player.portfolio.cash;
-                let shares = player.portfolio.shares;
-                let net_worth = player.portfolio.net_worth(world.price, world.cycle, vol);
-                let aura = player.aura;
-                let options_count = player.portfolio.options.len();
-                let price = world.price;
-                let cycle = world.cycle;
-                let psenders = personal_senders.clone();
-
-                if api_key.is_empty() {
-                    let tips = fallback_feedback_text(cycle, false);
-                    if let Ok(json) =
-                        serde_json::to_string(&ServerMsg::PlayerFeedback { player_id, tips })
-                    {
-                        send_targeted(&psenders, player_id, Arc::new(json));
-                    }
-                    continue;
-                }
-
-                let key = api_key.clone();
-                let recent_for_player = recent.clone();
-                tokio::spawn(async move {
-                    match crate::llm::narrator::generate_feedback(
-                        &name,
-                        &role,
-                        cash,
-                        shares,
-                        net_worth,
-                        aura,
-                        options_count,
-                        price,
-                        &recent_for_player,
-                        cycle,
-                        &key,
-                    )
-                    .await
-                    {
-                        Ok(tips) => {
-                            if let Ok(json) = serde_json::to_string(&ServerMsg::PlayerFeedback {
-                                player_id,
-                                tips,
-                            }) {
-                                send_targeted(&psenders, player_id, Arc::new(json));
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("feedback error for {name}: {e}");
-                            let tips = fallback_feedback_text(cycle, true);
-                            if let Ok(json) = serde_json::to_string(&ServerMsg::PlayerFeedback {
-                                player_id,
-                                tips,
-                            }) {
-                                send_targeted(&psenders, player_id, Arc::new(json));
-                            }
-                        }
-                    }
-                });
-            }
-
-            let mut reset_in_summary = false;
+            let mut reset_requested = false;
+            let mut all_locked_in = false;
             loop {
-                let Some(msg) = action_rx.recv().await else {
-                    return;
-                };
-                if let actions::InboundMsg::Admin {
-                    command: actions::AdminCommand::ContinueGame,
-                } = &msg
-                {
-                    break;
+                tokio::select! {
+                    msg = action_rx.recv() => {
+                        if let Some(msg) = msg {
+                            let was_paused = world.paused;
+                            reset_requested = handle_inbound(&mut world, msg, &broadcast_tx, &snapshot);
+                            all_locked_in = world.all_players_locked_in();
+                            if !was_paused && world.paused {
+                                paused_at = Some(Instant::now());
+                                deadline.as_mut().reset(Instant::now() + Duration::from_secs(86400));
+                            } else if was_paused && !world.paused {
+                                if let Some(at) = paused_at.take() {
+                                    decision_end += at.elapsed();
+                                    deadline.as_mut().reset(decision_end);
+                                }
+                                let secs_left = decision_end.duration_since(Instant::now()).as_secs();
+                                broadcast_msg(&broadcast_tx, &ServerMsg::CyclePhase {
+                                    phase: "decision".to_string(),
+                                    cycle: world.cycle,
+                                    seconds_remaining: secs_left,
+                                });
+                                upsert_snapshot_cycle_phase(&snapshot, "decision", world.cycle, secs_left);
+                            }
+                        }
+                    }
+                    _ = &mut deadline => {
+                        if !world.paused { break; }
+                        deadline.as_mut().reset(Instant::now() + Duration::from_secs(86400));
+                    }
                 }
-                reset_in_summary = handle_inbound(&mut world, msg, &broadcast_tx, &snapshot);
-                if reset_in_summary || world.game_over {
+                if reset_requested || world.game_over || (!world.paused && all_locked_in) {
+                    if all_locked_in {
+                        tracing::info!("All players locked in — advancing cycle early");
+                    }
                     break;
                 }
             }
 
-            if reset_in_summary {
+            if reset_requested {
                 tracing::info!(
-                    "Game reset by admin (during summary) — cycle {} with {} players",
+                    "Game reset by admin — cycle {} with {} players",
                     world.cycle,
                     world.players.len()
                 );
-                clear_code("reset during summary");
+                clear_code("reset");
                 on_game_end();
                 let cycle_secs = world.cycle_duration_secs;
                 world = World::new(seed);
@@ -633,13 +363,340 @@ pub async fn run_loop(
                 );
                 clear_code("game over");
                 on_game_end();
+                broadcast_msg(
+                    &broadcast_tx,
+                    &ServerMsg::GameOver {
+                        reason: world.game_over_reason.clone().unwrap_or_default(),
+                    },
+                );
                 let stats = world.compute_debrief();
                 broadcast_msg(&broadcast_tx, &ServerMsg::Debrief { stats });
                 spawn_debrief_narrative(&world, broadcast_tx.clone(), api_key.clone());
                 break 'game;
             }
+
+            world.phase = CyclePhase::Resolving;
+            broadcast_msg(
+                &broadcast_tx,
+                &ServerMsg::CyclePhase {
+                    phase: "resolving".to_string(),
+                    cycle: world.cycle,
+                    seconds_remaining: 0,
+                },
+            );
+            upsert_snapshot_cycle_phase(&snapshot, "resolving", world.cycle, 0);
+
+            let cycle_events = world.resolve_cycle();
+            broadcast_all_state(&world, &broadcast_tx, &snapshot, &cycle_events);
+
+            // Check max-cycles limit after each resolution.
+            if !world.game_over && world.cycle >= world::MAX_CYCLES {
+                world.game_over = true;
+                world.game_over_reason =
+                    Some(format!("Game ended after {} cycles", world::MAX_CYCLES));
+            }
+
+            if !api_key.is_empty() {
+                // ── Per-cycle narrator headline (fire-and-forget, Haiku) ──────────
+                {
+                    let tx2 = broadcast_tx.clone();
+                    let key = api_key.clone();
+                    let evs = cycle_events.clone();
+                    let cycle = world.cycle;
+                    let price = world.price;
+                    tokio::spawn(async move {
+                        match crate::llm::narrator::generate(&evs, cycle, price, &key).await {
+                            Ok(text) => broadcast_msg(&tx2, &ServerMsg::Headline { text, cycle }),
+                            Err(e) => tracing::warn!("narrator error: {e}"),
+                        }
+                    });
+                }
+
+                // ── Per-cycle admin summary — targeted to host connections only ───
+                {
+                    let key = api_key.clone();
+                    let evs = cycle_events.clone();
+                    let cycle = world.cycle;
+                    let price = world.price;
+                    let player_count = world.players.len();
+                    let ctx_arc = admin_context.clone();
+                    let prior = admin_context.lock().unwrap().clone();
+                    let hsenders = host_senders.clone();
+                    tokio::spawn(async move {
+                        match crate::llm::narrator::generate_admin_summary(
+                            &evs,
+                            cycle,
+                            price,
+                            player_count,
+                            prior,
+                            &key,
+                        )
+                        .await
+                        {
+                            Ok((text, new_ctx)) => {
+                                *ctx_arc.lock().unwrap() = new_ctx;
+                                if let Ok(json) =
+                                    serde_json::to_string(&ServerMsg::AdminSummary { text, cycle })
+                                {
+                                    let arc = Arc::new(json);
+                                    let senders = hsenders.lock().unwrap();
+                                    for s in senders.iter() {
+                                        let _ = s.send(arc.clone());
+                                    }
+                                }
+                            }
+                            Err(e) => tracing::warn!("admin summary error: {e}"),
+                        }
+                    });
+                }
+            }
+
+            if world.game_over {
+                tracing::info!(
+                    "Game over — cycle {} with {} players, reason: {:?}",
+                    world.cycle,
+                    world.players.len(),
+                    world.game_over_reason
+                );
+                clear_code("game over");
+                on_game_end();
+                broadcast_msg(
+                    &broadcast_tx,
+                    &ServerMsg::GameOver {
+                        reason: world.game_over_reason.clone().unwrap_or_default(),
+                    },
+                );
+                let stats = world.compute_debrief();
+                broadcast_msg(&broadcast_tx, &ServerMsg::Debrief { stats });
+                spawn_debrief_narrative(&world, broadcast_tx.clone(), api_key.clone());
+                break 'game;
+            }
+
+            let is_milestone = world.cycle.is_multiple_of(5) && world.cycle > 0;
+            if is_milestone {
+                world.phase = CyclePhase::Summary;
+                broadcast_msg(
+                    &broadcast_tx,
+                    &ServerMsg::CyclePhase {
+                        phase: "summary".to_string(),
+                        cycle: world.cycle,
+                        seconds_remaining: 0,
+                    },
+                );
+                upsert_snapshot_cycle_phase(&snapshot, "summary", world.cycle, 0);
+
+                // Events from the last 5 cycles.
+                let cutoff = world.cycle.saturating_sub(5);
+                let recent: Vec<(u64, crate::sim::events::GameEvent)> = world
+                    .event_log
+                    .entries
+                    .iter()
+                    .filter(|(c, _)| *c > cutoff)
+                    .cloned()
+                    .collect();
+                // Player standings sorted by net worth descending.
+                let vol = world.realized_vol();
+                let mut standings: Vec<(String, rust_decimal::Decimal)> = world
+                    .players
+                    .values()
+                    .map(|p| {
+                        (
+                            p.name.clone(),
+                            p.portfolio.net_worth(world.price, world.cycle, vol),
+                        )
+                    })
+                    .collect();
+                standings.sort_by(|a, b| b.1.cmp(&a.1));
+
+                // Always send a milestone summary so clients never hang on "Generating...".
+                if api_key.is_empty() {
+                    let text = fallback_milestone_summary(world.cycle, &standings, false);
+                    broadcast_msg(
+                        &broadcast_tx,
+                        &ServerMsg::MilestoneSummary {
+                            text,
+                            cycle: world.cycle,
+                        },
+                    );
+                } else {
+                    let tx2 = broadcast_tx.clone();
+                    let key = api_key.clone();
+                    let cycle = world.cycle;
+                    let price = world.price;
+                    let recent_for_summary = recent.clone();
+                    let standings_for_fallback = standings.clone();
+                    tokio::spawn(async move {
+                        match crate::llm::narrator::generate_milestone_summary(
+                            &recent_for_summary,
+                            cycle,
+                            price,
+                            &standings,
+                            &key,
+                        )
+                        .await
+                        {
+                            Ok(text) => {
+                                broadcast_msg(&tx2, &ServerMsg::MilestoneSummary { text, cycle })
+                            }
+                            Err(e) => {
+                                tracing::warn!("milestone summary error: {e}");
+                                let text = fallback_milestone_summary(
+                                    cycle,
+                                    &standings_for_fallback,
+                                    true,
+                                );
+                                broadcast_msg(&tx2, &ServerMsg::MilestoneSummary { text, cycle });
+                            }
+                        }
+                    });
+                }
+
+                // Per-player coaching only at checkpoints, using the last 5 cycles.
+                for player in world.players.values() {
+                    let player_id = player.id.0;
+                    let name = player.name.clone();
+                    let role = format!("{:?}", player.role);
+                    let cash = player.portfolio.cash;
+                    let shares = player.portfolio.shares;
+                    let net_worth = player.portfolio.net_worth(world.price, world.cycle, vol);
+                    let aura = player.aura;
+                    let options_count = player.portfolio.options.len();
+                    let price = world.price;
+                    let cycle = world.cycle;
+                    let psenders = personal_senders.clone();
+
+                    if api_key.is_empty() {
+                        let tips = fallback_feedback_text(cycle, false);
+                        if let Ok(json) =
+                            serde_json::to_string(&ServerMsg::PlayerFeedback { player_id, tips })
+                        {
+                            send_targeted(&psenders, player_id, Arc::new(json));
+                        }
+                        continue;
+                    }
+
+                    let key = api_key.clone();
+                    let recent_for_player = recent.clone();
+                    tokio::spawn(async move {
+                        match crate::llm::narrator::generate_feedback(
+                            &name,
+                            &role,
+                            cash,
+                            shares,
+                            net_worth,
+                            aura,
+                            options_count,
+                            price,
+                            &recent_for_player,
+                            cycle,
+                            &key,
+                        )
+                        .await
+                        {
+                            Ok(tips) => {
+                                if let Ok(json) =
+                                    serde_json::to_string(&ServerMsg::PlayerFeedback {
+                                        player_id,
+                                        tips,
+                                    })
+                                {
+                                    send_targeted(&psenders, player_id, Arc::new(json));
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("feedback error for {name}: {e}");
+                                let tips = fallback_feedback_text(cycle, true);
+                                if let Ok(json) =
+                                    serde_json::to_string(&ServerMsg::PlayerFeedback {
+                                        player_id,
+                                        tips,
+                                    })
+                                {
+                                    send_targeted(&psenders, player_id, Arc::new(json));
+                                }
+                            }
+                        }
+                    });
+                }
+
+                let mut reset_in_summary = false;
+                loop {
+                    let Some(msg) = action_rx.recv().await else {
+                        return;
+                    };
+                    if let actions::InboundMsg::Admin {
+                        command: actions::AdminCommand::ContinueGame,
+                    } = &msg
+                    {
+                        break;
+                    }
+                    reset_in_summary = handle_inbound(&mut world, msg, &broadcast_tx, &snapshot);
+                    if reset_in_summary || world.game_over {
+                        break;
+                    }
+                }
+
+                if reset_in_summary {
+                    tracing::info!(
+                        "Game reset by admin (during summary) — cycle {} with {} players",
+                        world.cycle,
+                        world.players.len()
+                    );
+                    clear_code("reset during summary");
+                    on_game_end();
+                    let cycle_secs = world.cycle_duration_secs;
+                    world = World::new(seed);
+                    world.cycle_duration_secs = cycle_secs;
+                    admin_context.lock().unwrap().clear();
+                    broadcast_msg(&broadcast_tx, &ServerMsg::GameReset {});
+                    continue 'game;
+                }
+
+                if world.game_over {
+                    tracing::info!(
+                        "Game over — cycle {} with {} players, reason: {:?}",
+                        world.cycle,
+                        world.players.len(),
+                        world.game_over_reason
+                    );
+                    clear_code("game over");
+                    on_game_end();
+                    broadcast_msg(
+                        &broadcast_tx,
+                        &ServerMsg::GameOver {
+                            reason: world.game_over_reason.clone().unwrap_or_default(),
+                        },
+                    );
+                    let stats = world.compute_debrief();
+                    broadcast_msg(&broadcast_tx, &ServerMsg::Debrief { stats });
+                    spawn_debrief_narrative(&world, broadcast_tx.clone(), api_key.clone());
+                    break 'game;
+                }
+            }
         }
-    }
+
+        // Game ended naturally. Idle here until the host starts a new game.
+        tracing::info!("Game ended — waiting for ResetGame to start a new game");
+        loop {
+            let Some(msg) = action_rx.recv().await else {
+                return;
+            };
+            if let actions::InboundMsg::Admin {
+                command: actions::AdminCommand::ResetGame,
+            } = msg
+            {
+                tracing::info!("New game requested — resetting world");
+                clear_code("new game");
+                on_game_end();
+                let cycle_secs = world.cycle_duration_secs;
+                world = World::new(seed);
+                world.cycle_duration_secs = cycle_secs;
+                admin_context.lock().unwrap().clear();
+                broadcast_msg(&broadcast_tx, &ServerMsg::GameReset {});
+                break; // → continue 'restart → back to 'lobby
+            }
+        }
+    } // end 'restart: loop
 }
 
 /// Spawn an async task to generate the end-of-game narrative and broadcast it.

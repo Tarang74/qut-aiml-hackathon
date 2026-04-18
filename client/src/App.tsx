@@ -47,35 +47,9 @@ export default function App() {
   }));
   const [route, navigate] = useRouteState();
 
-  // ── One-time migration: remove old localStorage key that caused auto-redirects ─
+  // ── One-time migration: remove old localStorage/sessionStorage keys ─────
   useEffect(() => {
     localStorage.removeItem("aura_game_code");
-  }, []);
-
-  // ── Session restoration on mount ─────────────────────────────────────────
-  // Read the server session so host tabs survive reload and players reconnect.
-  useEffect(() => {
-    fetch("/api/session")
-      .then((r) => r.json())
-      .then((data: { type: string; game_code?: string; session_id?: string }) => {
-        if (data.type === "host") {
-          dispatch({ type: "set_host" });
-          if (data.game_code) {
-            dispatch({ type: "set_game_code", code: data.game_code });
-          }
-        } else if (data.type === "player" && data.session_id) {
-          // Set nonce = session_id so the auto-sent Welcome can be claimed.
-          dispatch({ type: "set_join_nonce", nonce: data.session_id });
-        } else {
-          // No valid server session: clear any stale local identity.
-          sessionStorage.removeItem(SS_HOST);
-          dispatch({ type: "clear_host" });
-          dispatch({ type: "leave_game" });
-        }
-      })
-      .catch(() => {
-        // Server unreachable — ignore.
-      });
   }, []);
 
   // isHost: per-tab (sessionStorage).
@@ -99,12 +73,6 @@ export default function App() {
   useEffect(() => { navigateRef.current = navigate; }, [navigate]);
 
   const onMessage = useCallback((msg: ServerMsg) => {
-    // Drop the session cookie on reset or game-over so stale identity doesn't
-    // auto-rejoin this client into the next game on reconnect.
-    if (msg.type === "game_reset" || msg.type === "game_over") {
-      document.cookie = "aura_session=; Max-Age=0; Path=/";
-      document.cookie = "aura_server=; Max-Age=0; Path=/";
-    }
     dispatch({ type: "server_msg", msg });
   }, []);
   const onConnect = useCallback(() => dispatch({ type: "ws_connected" }), []);

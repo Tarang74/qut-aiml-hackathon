@@ -5,19 +5,15 @@ use rust_decimal::Decimal;
 
 use super::{MarketAgent, PendingOrder, WorldView};
 use crate::market::book::{PlayerId, Side};
-/// Autopilot NPC farm owner: sells corn on the market and occasionally buys.
+/// Autopilot NPC noise trader: symmetric small orders on both sides to add
+/// realistic volume without net directional bias.
 pub struct NpcOwnerAgent {
     id: PlayerId,
-    /// Stored corn awaiting sale.
-    corn: u32,
 }
 
 impl NpcOwnerAgent {
     pub fn new(player_id: PlayerId, _farm_id: Option<crate::sim::entities::FarmId>) -> Self {
-        Self {
-            id: player_id,
-            corn: 0,
-        }
+        Self { id: player_id }
     }
 }
 
@@ -29,36 +25,30 @@ impl MarketAgent for NpcOwnerAgent {
     fn act(&mut self, view: &WorldView, rng: &mut StdRng) -> Vec<PendingOrder> {
         let mut orders = Vec::new();
 
-        // Sell stored corn at slightly below market (eager seller).
-        if self.corn > 0 && rng.random::<f64>() < 0.70 {
-            let sell_qty = (self.corn / 2).max(1).min(self.corn);
-            let sell_price = view.price * 0.995;
-            let sell_price_d = Decimal::from_f64(sell_price).unwrap_or(Decimal::ONE_HUNDRED);
+        // 20% chance to sell a small lot just below market.
+        if rng.random::<f64>() < 0.20 {
+            let price_d = Decimal::from_f64(view.price * 0.997).unwrap_or(Decimal::ONE_HUNDRED);
             orders.push(PendingOrder {
                 player_id: self.id,
                 side: Side::Ask,
-                price: Some(sell_price_d),
-                quantity: sell_qty,
+                price: Some(price_d),
+                quantity: rng.random_range(2u32..=8),
             });
-            self.corn -= sell_qty;
         }
 
-        // Occasional buy to hedge / accumulate shares.
-        if rng.random::<f64>() < 0.15 {
-            let buy_price = view.price * 0.998;
-            let buy_price_d = Decimal::from_f64(buy_price).unwrap_or(Decimal::ONE_HUNDRED);
+        // 20% chance to buy a small lot just above market.
+        if rng.random::<f64>() < 0.20 {
+            let price_d = Decimal::from_f64(view.price * 1.003).unwrap_or(Decimal::ONE_HUNDRED);
             orders.push(PendingOrder {
                 player_id: self.id,
                 side: Side::Bid,
-                price: Some(buy_price_d),
-                quantity: rng.random_range(1u32..=5),
+                price: Some(price_d),
+                quantity: rng.random_range(2u32..=8),
             });
         }
 
         orders
     }
 
-    fn apply_fill(&mut self, _side: Side, _price: Decimal, _quantity: u32) {
-        // NpcOwner cash/shares are tracked on NpcOwner in World, not here.
-    }
+    fn apply_fill(&mut self, _side: Side, _price: Decimal, _quantity: u32) {}
 }

@@ -195,4 +195,5 @@ export type ClientMsg =
   | { type: "action"; action: PlayerAction }
   | { type: "admin"; command: AdminCommand }
   | { type: "ping" }
-  | { type: "leave" };
+  | { type: "leave" }
+  | { type: "claim_host" };

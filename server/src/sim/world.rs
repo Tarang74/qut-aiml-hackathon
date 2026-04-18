@@ -19,6 +19,7 @@ use crate::market::options::{self, OptionPosition, OptionType};
 use crate::market::portfolio::Portfolio;
 
 pub const HISTORY_LEN: usize = 300;
+pub const MAX_CYCLES: u64 = 10;
 const INITIAL_PRICE: f64 = 100.0;
 /// Player IDs 1–1000 are abstract market agents; 1001–1007 are named NPCs; ≥2001 are human players.
 

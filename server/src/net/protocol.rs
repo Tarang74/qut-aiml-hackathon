@@ -200,4 +200,6 @@ pub enum ClientMsg {
     Ping,
     /// Player voluntarily leaves the game — removes them from the world.
     Leave,
+    /// Upgrade this WS connection to host role (checked against server session).
+    ClaimHost,
 }

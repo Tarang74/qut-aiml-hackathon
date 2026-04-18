@@ -56,6 +56,16 @@ impl SessionStore {
             .retain(|_, v| !matches!(v, SessionData::Player { .. }));
     }
 
+    /// Clear the game_code from all Host sessions so the host can start a fresh
+    /// game with a new code instead of being locked to the just-ended game.
+    pub fn clear_host_game_code(&self) {
+        for mut entry in self.0.iter_mut() {
+            if let SessionData::Host { game_code } = entry.value_mut() {
+                *game_code = None;
+            }
+        }
+    }
+
     /// Parse a raw Cookie header value and return the value for a named cookie.
     pub fn parse_cookie_value(cookie_header: &str, cookie_name: &str) -> Option<String> {
         let needle = format!("{cookie_name}=");

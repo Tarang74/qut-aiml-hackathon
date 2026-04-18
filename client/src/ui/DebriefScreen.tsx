@@ -67,26 +67,23 @@ export default function DebriefScreen() {
   const send = useWsSend();
 
   function endHostSession() {
+    // Send reset_game — server will broadcast GameReset, which triggers
+    // App.tsx's resetCount effect to navigate the host to /create.
+    send({ type: "admin", command: { cmd: "reset_game" } });
     sessionStorage.removeItem(SS_HOST);
-    dispatch({ type: "clear_host" });
-    navigate("/create");
   }
 
   function quitGame() {
-    // For players, remove them from the world; host tabs don't own a player entity.
-    if (!isHost) {
-      send({ type: "leave" });
-    }
-    fetch("/api/session/clear", { method: "POST", keepalive: true }).catch(() => {});
-    document.cookie = "aura_session=; Max-Age=0; Path=/";
-    document.cookie = "aura_server=; Max-Age=0; Path=/";
-    sessionStorage.removeItem(SS_HOST);
     if (isHost) {
+      // Host leaves without starting a new game. Server keeps waiting for ResetGame.
       dispatch({ type: "clear_host" });
+      sessionStorage.removeItem(SS_HOST);
+      navigate("/");
     } else {
+      send({ type: "leave" });
       dispatch({ type: "leave_game" });
+      navigate("/");
     }
-    navigate("/");
   }
 
   if (!debrief) {

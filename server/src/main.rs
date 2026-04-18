@@ -43,8 +43,9 @@ async fn main() {
     world.cycle_duration_secs = cfg.cycle_secs;
     let ss = state.session_store.clone();
     let on_game_end = std::sync::Arc::new(move || {
-        tracing::info!("Clearing player sessions");
+        tracing::info!("Clearing player sessions and host game code");
         ss.clear_players();
+        ss.clear_host_game_code();
     });
     tokio::spawn(sim::run_loop(
         world,

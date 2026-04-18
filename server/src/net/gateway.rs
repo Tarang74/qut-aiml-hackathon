@@ -11,7 +11,6 @@ use super::protocol::{ClientMsg, ServerMsg};
 use super::sessions::{SessionData, SessionStore};
 use crate::market::book::PlayerId;
 use crate::sim::actions::InboundMsg;
-use crate::sim::entities::Role;
 
 /// Shared application state injected into every WS handler and HTTP route.
 #[derive(Clone)]
@@ -96,7 +95,7 @@ pub async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: O
 
     // Resolve identity from session.
     let session_data = session_id.and_then(|id| state.session_store.get(id));
-    let is_host = matches!(&session_data, Some(SessionData::Host { .. }));
+    let mut is_host = matches!(&session_data, Some(SessionData::Host { .. }));
 
     let player_id = match &session_data {
         Some(SessionData::Player { player_id, .. }) => PlayerId(*player_id),
@@ -140,31 +139,6 @@ pub async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: O
         state
             .personal_senders
             .insert(player_id.0, personal_tx.clone());
-    }
-
-    // Reconnecting player: auto-send Join so the sim re-broadcasts Welcome and
-    // the client can claim its identity without manual re-entry.
-    if let Some(SessionData::Player {
-        player_id: pid,
-        name,
-        role,
-    }) = &session_data
-    {
-        let parsed_role = if role == "farmer" {
-            Role::Farmer
-        } else {
-            Role::Trader
-        };
-        let nonce = session_id.map(|id| id.to_string()).unwrap_or_default();
-        let _ = state
-            .action_tx
-            .send(InboundMsg::Join {
-                player_id: PlayerId(*pid),
-                name: name.clone(),
-                role: parsed_role,
-                client_nonce: nonce,
-            })
-            .await;
     }
 
     // Send the full state snapshot immediately.
@@ -217,6 +191,15 @@ pub async fn handle_socket(mut socket: WebSocket, state: AppState, session_id: O
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMsg>(&text) {
+                            Ok(ClientMsg::ClaimHost) => {
+                                let fresh = session_id.and_then(|id| state.session_store.get(id));
+                                if !is_host && matches!(fresh, Some(SessionData::Host { .. })) {
+                                    state.personal_senders.remove(&player_id.0);
+                                    state.host_senders.lock().unwrap().push(personal_tx.clone());
+                                    is_host = true;
+                                    tracing::info!(session_id = ?session_id, "ws upgraded to host");
+                                }
+                            }
                             Ok(client_msg) => {
                                 let is_leave = matches!(client_msg, ClientMsg::Leave);
                                 handle_client_msg(
@@ -377,6 +360,8 @@ async fn handle_client_msg(
             }
             InboundMsg::Leave { player_id }
         }
+        // Handled inline in handle_socket before this function is called.
+        ClientMsg::ClaimHost => return,
     };
     let _ = state.action_tx.send(inbound).await;
 }

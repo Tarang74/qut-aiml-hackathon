@@ -13,7 +13,9 @@ export default function WaitingScreen() {
         <h1 style={s.heading}>Waiting for host to start…</h1>
         <p style={s.sub}>
           You've joined as <strong style={s.name}>{state.myName}</strong> —{" "}
-          <span style={{ color: state.myRole === "farmer" ? "#7ec87e" : "#7ec8c8" }}>
+          <span
+            style={{ color: state.myRole === "farmer" ? "#7ec87e" : "#7ec8c8" }}
+          >
             {state.myRole}
           </span>
         </p>

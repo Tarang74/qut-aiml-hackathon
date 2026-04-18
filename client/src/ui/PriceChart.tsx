@@ -49,7 +49,10 @@ function draw(canvas: HTMLCanvasElement, prices: number[], volumes: number[]) {
 
   // Price → Y pixel (with 5% vertical padding so extremes don't clip).
   const pToY = (p: number) =>
-    PAD.top + pricePaneH - ((p - minP) / range) * pricePaneH * 0.9 - pricePaneH * 0.05;
+    PAD.top +
+    pricePaneH -
+    ((p - minP) / range) * pricePaneH * 0.9 -
+    pricePaneH * 0.05;
   // Index → X pixel.
   const iToX = (i: number) =>
     PAD.left + (prices.length > 1 ? (i / (prices.length - 1)) * cW : 0);
@@ -70,9 +73,12 @@ function draw(canvas: HTMLCanvasElement, prices: number[], volumes: number[]) {
   if (!hasData) return;
 
   // ── Volume bars (lower pane) ──────────────────────────────────────────────
-  const vols = volumes.length === prices.length
-    ? volumes
-    : prices.map((_, i) => (i === 0 ? 0 : Math.abs(prices[i] - prices[i - 1])));
+  const vols =
+    volumes.length === prices.length
+      ? volumes
+      : prices.map((_, i) =>
+          i === 0 ? 0 : Math.abs(prices[i] - prices[i - 1]),
+        );
   const maxVol = Math.max(...vols, 1e-6);
   const barBaseY = PAD.top + pricePaneH + 6 + volumePaneH;
   const stepX = prices.length > 1 ? cW / (prices.length - 1) : cW;
@@ -99,7 +105,10 @@ function draw(canvas: HTMLCanvasElement, prices: number[], volumes: number[]) {
   const trendUp = prices[prices.length - 1] >= prices[trendRefIdx];
   const lineColor = trendUp ? "#1d6b1d" : "#a03333";
   const lineAccent = trendUp ? "#3b8c2f" : "#c05555";
-  grad.addColorStop(0, trendUp ? "rgba(29,107,29,0.22)" : "rgba(160,51,51,0.22)");
+  grad.addColorStop(
+    0,
+    trendUp ? "rgba(29,107,29,0.22)" : "rgba(160,51,51,0.22)",
+  );
   grad.addColorStop(1, trendUp ? "rgba(29,107,29,0)" : "rgba(160,51,51,0)");
   ctx.fillStyle = grad;
   ctx.fill();
@@ -108,11 +117,18 @@ function draw(canvas: HTMLCanvasElement, prices: number[], volumes: number[]) {
   ctx.beginPath();
   ctx.moveTo(iToX(0), pToY(prices[0]));
   for (let i = 1; i < prices.length; i++) ctx.lineTo(iToX(i), pToY(prices[i]));
-  const lineGrad = ctx.createLinearGradient(PAD.left, PAD.top, PAD.left + cW, PAD.top + pricePaneH);
+  const lineGrad = ctx.createLinearGradient(
+    PAD.left,
+    PAD.top,
+    PAD.left + cW,
+    PAD.top + pricePaneH,
+  );
   lineGrad.addColorStop(0, lineColor);
   lineGrad.addColorStop(1, lineAccent);
   ctx.strokeStyle = lineGrad;
-  ctx.shadowColor = trendUp ? "rgba(92, 121, 58, 0.22)" : "rgba(145, 68, 68, 0.22)";
+  ctx.shadowColor = trendUp
+    ? "rgba(92, 121, 58, 0.22)"
+    : "rgba(145, 68, 68, 0.22)";
   ctx.shadowBlur = 10;
   ctx.shadowOffsetY = 2;
   ctx.lineWidth = 3;

@@ -79,7 +79,13 @@ export default function LobbyScreen({ code }: Props) {
     if (!name || !connected) return;
     const nonce = Math.random().toString(36).slice(2, 10);
     globalDispatch({ type: "set_join_nonce", nonce });
-    send({ type: "join", name, role: form.role, client_nonce: nonce, game_code: code });
+    send({
+      type: "join",
+      name,
+      role: form.role,
+      client_nonce: nonce,
+      game_code: code,
+    });
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -99,7 +105,9 @@ export default function LobbyScreen({ code }: Props) {
         <p style={{ ...styles.notice, color: "#b94040", fontSize: "1rem" }}>
           No game found with code <strong>{code}</strong>.
         </p>
-        <p style={styles.notice}>The game may not have started yet, or the code is wrong.</p>
+        <p style={styles.notice}>
+          The game may not have started yet, or the code is wrong.
+        </p>
         <button style={styles.btn} onClick={() => navigate("/join")}>
           ← Back to Join
         </button>
@@ -117,9 +125,7 @@ export default function LobbyScreen({ code }: Props) {
 
       <h1 style={styles.title}>🌽 Aura Farmers</h1>
 
-      {!connected && (
-        <p style={styles.notice}>Connecting to server…</p>
-      )}
+      {!connected && <p style={styles.notice}>Connecting to server…</p>}
       {error && <p style={{ ...styles.notice, color: "#ff6b6b" }}>{error}</p>}
 
       <div style={styles.form}>
@@ -159,17 +165,30 @@ export default function LobbyScreen({ code }: Props) {
           <div style={styles.roleCard}>
             <p style={styles.roleCardTitle}>📈 Trader</p>
             <p style={styles.roleCardText}>
-              You start with <strong>$15,000 cash</strong> and no farm. Your edge is the market: buy &amp; sell CornCo shares, write options to collect premium, and use power moves like <em>Corner Market</em> or <em>Dump All</em> to swing the price. Watch bid/ask depth and ride the momentum.
+              You start with <strong>$15,000 cash</strong> and no farm. Your
+              edge is the market: buy &amp; sell CornCo shares, write options to
+              collect premium, and use power moves like <em>Corner Market</em>{" "}
+              or <em>Dump All</em> to swing the price. Watch bid/ask depth and
+              ride the momentum.
             </p>
-            <p style={styles.roleCardHint}>Best for: market-savvy players who like reading charts and timing trades.</p>
+            <p style={styles.roleCardHint}>
+              Best for: market-savvy players who like reading charts and timing
+              trades.
+            </p>
           </div>
         ) : (
           <div style={styles.roleCard}>
             <p style={styles.roleCardTitle}>🚜 Farmer</p>
             <p style={styles.roleCardText}>
-              You start with <strong>$10,000 cash</strong> plus a farm. Each cycle: <em>Plant → Harvest → Sell</em> corn through mills. Hire workers to boost yield. Buy options to hedge your harvest price against a market crash.
+              You start with <strong>$10,000 cash</strong> plus a farm. Each
+              cycle: <em>Plant → Harvest → Sell</em> corn through mills. Hire
+              workers to boost yield. Buy options to hedge your harvest price
+              against a market crash.
             </p>
-            <p style={styles.roleCardHint}>Best for: players who like building an empire and controlling supply.</p>
+            <p style={styles.roleCardHint}>
+              Best for: players who like building an empire and controlling
+              supply.
+            </p>
           </div>
         )}
 
@@ -215,8 +234,16 @@ const styles = {
     letterSpacing: "0.05em",
     fontWeight: "500" as const,
   },
-  codeValue: { color: "#1d6b1d", fontWeight: "700" as const, letterSpacing: "0.2em" },
-  title: { fontSize: "2.2rem", fontWeight: "800" as const, letterSpacing: "-0.02em" },
+  codeValue: {
+    color: "#1d6b1d",
+    fontWeight: "700" as const,
+    letterSpacing: "0.2em",
+  },
+  title: {
+    fontSize: "2.2rem",
+    fontWeight: "800" as const,
+    letterSpacing: "-0.02em",
+  },
   notice: { color: "#8a8a80", fontSize: "0.85rem" },
   form: {
     display: "flex",
@@ -264,7 +291,22 @@ const styles = {
     borderRadius: 8,
     padding: "0.75rem 0.9rem",
   },
-  roleCardTitle: { margin: "0 0 0.35rem", fontSize: "0.875rem", fontWeight: "700" as const, color: "#3a3010" },
-  roleCardText: { margin: "0 0 0.35rem", fontSize: "0.8rem", color: "#5a4a10", lineHeight: 1.6 },
-  roleCardHint: { margin: 0, fontSize: "0.72rem", color: "#8a7a40", fontStyle: "italic" as const },
+  roleCardTitle: {
+    margin: "0 0 0.35rem",
+    fontSize: "0.875rem",
+    fontWeight: "700" as const,
+    color: "#3a3010",
+  },
+  roleCardText: {
+    margin: "0 0 0.35rem",
+    fontSize: "0.8rem",
+    color: "#5a4a10",
+    lineHeight: 1.6,
+  },
+  roleCardHint: {
+    margin: 0,
+    fontSize: "0.72rem",
+    color: "#8a7a40",
+    fontStyle: "italic" as const,
+  },
 } as const;

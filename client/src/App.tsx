@@ -39,7 +39,6 @@ import EventBanner from "./ui/EventBanner";
 // one as host and one as player without colliding.
 const SS_HOST = "aura_is_host";
 
-
 export default function App() {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE, (init) => ({
     ...init,
@@ -70,7 +69,9 @@ export default function App() {
 
   // Keep navigate stable inside callbacks without re-creating them on every render
   const navigateRef = useRef(navigate);
-  useEffect(() => { navigateRef.current = navigate; }, [navigate]);
+  useEffect(() => {
+    navigateRef.current = navigate;
+  }, [navigate]);
 
   const onMessage = useCallback((msg: ServerMsg) => {
     dispatch({ type: "server_msg", msg });
@@ -105,9 +106,15 @@ export default function App() {
         screen = <CreateScreen />;
         break;
       case "host":
-        screen = state.isHost
-          ? (state.phase === "game_over" ? <DebriefScreen /> : <HostScreen />)
-          : <CreateScreen />;
+        screen = state.isHost ? (
+          state.phase === "game_over" ? (
+            <DebriefScreen />
+          ) : (
+            <HostScreen />
+          )
+        ) : (
+          <CreateScreen />
+        );
         break;
       case "code":
         screen = <LobbyScreen code={route.code} />;

@@ -79,7 +79,10 @@ export default function CreateScreen() {
         <p style={styles.sub}>Preparing your host room...</p>
       ) : (
         <div style={styles.codeBlock}>
-          <QRCode value={`${window.location.origin}/${local.code}`} style={styles.qrImg} />
+          <QRCode
+            value={`${window.location.origin}/${local.code}`}
+            style={styles.qrImg}
+          />
           <div style={styles.code}>{local.code}</div>
           <p style={styles.hint}>Enter this code on the join page</p>
 
@@ -124,7 +127,12 @@ export default function CreateScreen() {
               Start Match →
             </button>
             <button
-              style={{ ...styles.btn, background: "#f5f3ef", color: "#6b6b63", border: "1.5px solid #e2ddd6" }}
+              style={{
+                ...styles.btn,
+                background: "#f5f3ef",
+                color: "#6b6b63",
+                border: "1.5px solid #e2ddd6",
+              }}
               onClick={() => {
                 const code = String(Math.floor(1000 + Math.random() * 9000));
                 claimHostLobby(code, false);
@@ -150,8 +158,20 @@ const styles = {
     padding: "1.5rem 1rem",
     background: "#f5f3ef",
   },
-  title: { fontSize: "2.2rem", margin: 0, color: "#18181a", fontWeight: "800" as const, letterSpacing: "-0.02em" },
-  sub: { color: "#8a8a80", textAlign: "center" as const, maxWidth: 360, margin: 0, fontSize: "0.9rem" },
+  title: {
+    fontSize: "2.2rem",
+    margin: 0,
+    color: "#18181a",
+    fontWeight: "800" as const,
+    letterSpacing: "-0.02em",
+  },
+  sub: {
+    color: "#8a8a80",
+    textAlign: "center" as const,
+    maxWidth: 360,
+    margin: 0,
+    fontSize: "0.9rem",
+  },
   btn: {
     background: "#1d6b1d",
     color: "#fff",
@@ -182,7 +202,12 @@ const styles = {
     letterSpacing: "0.25em",
     color: "#1d6b1d",
   },
-  hint: { color: "#8a8a80", fontSize: "0.8rem", margin: 0, textAlign: "center" as const },
+  hint: {
+    color: "#8a8a80",
+    fontSize: "0.8rem",
+    margin: 0,
+    textAlign: "center" as const,
+  },
   qrImg: {
     width: "clamp(140px, 16vw, 220px)",
     height: "auto",
@@ -203,7 +228,11 @@ const styles = {
     letterSpacing: "0.08em",
   },
   rosterEmpty: { margin: 0, fontSize: "0.85rem", color: "#b0aea8" },
-  rosterList: { display: "flex", flexDirection: "column" as const, gap: "0.35rem" },
+  rosterList: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "0.35rem",
+  },
   rosterRow: {
     display: "flex",
     alignItems: "center",

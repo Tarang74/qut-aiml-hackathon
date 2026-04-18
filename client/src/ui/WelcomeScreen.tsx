@@ -15,7 +15,8 @@ export default function WelcomeScreen() {
         <div style={s.graphic}>🌽🚜📈🔥💰</div>
         <h1 style={s.title}>🌽 Aura Farmers</h1>
         <p style={s.tagline}>
-          Trade corn. Burn farms. Corner the market.<br />
+          Trade corn. Burn farms. Corner the market.
+          <br />
           The ultimate financial chaos simulator.
         </p>
       </div>
@@ -34,21 +35,27 @@ export default function WelcomeScreen() {
           <span style={s.featureIcon}>🚜</span>
           <div>
             <p style={s.featureTitle}>Farm or Trade</p>
-            <p style={s.featureDesc}>Pick a role and compete for the highest net worth</p>
+            <p style={s.featureDesc}>
+              Pick a role and compete for the highest net worth
+            </p>
           </div>
         </div>
         <div style={s.feature}>
           <span style={s.featureIcon}>📊</span>
           <div>
             <p style={s.featureTitle}>Live Markets</p>
-            <p style={s.featureDesc}>Real order book, options, and 100 AI market makers</p>
+            <p style={s.featureDesc}>
+              Real order book, options, and 100 AI market makers
+            </p>
           </div>
         </div>
         <div style={s.feature}>
           <span style={s.featureIcon}>🔥</span>
           <div>
             <p style={s.featureTitle}>Chaos Events</p>
-            <p style={s.featureDesc}>Droughts, famines, hitmen, and nuclear fallout</p>
+            <p style={s.featureDesc}>
+              Droughts, famines, hitmen, and nuclear fallout
+            </p>
           </div>
         </div>
       </div>
@@ -144,5 +151,10 @@ const s = {
     fontSize: "0.9rem",
     color: "#1a2e1a",
   },
-  featureDesc: { margin: 0, fontSize: "0.8rem", color: "#5a6a5a", lineHeight: 1.4 },
+  featureDesc: {
+    margin: 0,
+    fontSize: "0.8rem",
+    color: "#5a6a5a",
+    lineHeight: 1.4,
+  },
 } as const;

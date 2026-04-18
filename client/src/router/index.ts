@@ -5,10 +5,10 @@ import { createContext, useContext, useEffect, useState } from "react";
 export type Route =
   | { page: "welcome" } // / — landing page
   | { page: "create" }
-  | { page: "host" }    // /host — admin watch view, never joins as player
-  | { page: "join" }    // /join — join by code
+  | { page: "host" } // /host — admin watch view, never joins as player
+  | { page: "join" } // /join — join by code
   | { page: "code"; code: string } // /{4-digit-code}
-  | { page: "home" };   // fallback (treated as welcome)
+  | { page: "home" }; // fallback (treated as welcome)
 
 function parsePath(path: string): Route {
   if (path === "/" || path === "") return { page: "welcome" };

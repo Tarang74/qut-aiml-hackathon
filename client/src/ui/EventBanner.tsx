@@ -131,12 +131,45 @@ function bannersForEvent(ev: GameEvent): Omit<Banner, "id"> | null {
 
 // ── Severity → visual style ────────────────────────────────────────────────────
 
-const SEVERITY_STYLES: Record<Severity, { bg: string; border: string; icon: string; text: string; sub: string }> = {
-  positive:     { bg: "#e8f5e8", border: "#4a9a4a", icon: "#1d6b1d", text: "#0a3a0a", sub: "#2a6a2a" },
-  info:         { bg: "#e8eef8", border: "#5a7ab0", icon: "#1a3a7a", text: "#0a2060", sub: "#3a5a9a" },
-  warning:      { bg: "#fff8e0", border: "#c8a030", icon: "#7a5010", text: "#4a2a00", sub: "#8a6020" },
-  danger:       { bg: "#fde8e8", border: "#c83030", icon: "#8a1010", text: "#5a0000", sub: "#9a3030" },
-  catastrophe:  { bg: "#1a0000", border: "#ff2020", icon: "#ff6060", text: "#ffffff", sub: "#ffaaaa" },
+const SEVERITY_STYLES: Record<
+  Severity,
+  { bg: string; border: string; icon: string; text: string; sub: string }
+> = {
+  positive: {
+    bg: "#e8f5e8",
+    border: "#4a9a4a",
+    icon: "#1d6b1d",
+    text: "#0a3a0a",
+    sub: "#2a6a2a",
+  },
+  info: {
+    bg: "#e8eef8",
+    border: "#5a7ab0",
+    icon: "#1a3a7a",
+    text: "#0a2060",
+    sub: "#3a5a9a",
+  },
+  warning: {
+    bg: "#fff8e0",
+    border: "#c8a030",
+    icon: "#7a5010",
+    text: "#4a2a00",
+    sub: "#8a6020",
+  },
+  danger: {
+    bg: "#fde8e8",
+    border: "#c83030",
+    icon: "#8a1010",
+    text: "#5a0000",
+    sub: "#9a3030",
+  },
+  catastrophe: {
+    bg: "#1a0000",
+    border: "#ff2020",
+    icon: "#ff6060",
+    text: "#ffffff",
+    sub: "#ffaaaa",
+  },
 };
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -150,7 +183,8 @@ export default function EventBanner() {
   useEffect(() => {
     // Don't spawn banners on the debrief screen — same snapshot-replay issue as confetti.
     if (phase === "game_over") return;
-    if (cycleEvents === prevEventsRef.current || cycleEvents.length === 0) return;
+    if (cycleEvents === prevEventsRef.current || cycleEvents.length === 0)
+      return;
     prevEventsRef.current = cycleEvents;
 
     const newBanners: Banner[] = [];
@@ -200,12 +234,20 @@ export default function EventBanner() {
             >
               <span style={{ ...s.bannerIcon, color: col.icon }}>{b.icon}</span>
               <div style={s.bannerBody}>
-                <span style={{ ...s.bannerHeadline, color: col.text }}>{b.headline}</span>
-                {b.sub && <span style={{ ...s.bannerSub, color: col.sub }}>{b.sub}</span>}
+                <span style={{ ...s.bannerHeadline, color: col.text }}>
+                  {b.headline}
+                </span>
+                {b.sub && (
+                  <span style={{ ...s.bannerSub, color: col.sub }}>
+                    {b.sub}
+                  </span>
+                )}
               </div>
               <button
                 style={{ ...s.bannerClose, color: col.sub }}
-                onClick={() => setBanners((prev) => prev.filter((x) => x.id !== b.id))}
+                onClick={() =>
+                  setBanners((prev) => prev.filter((x) => x.id !== b.id))
+                }
               >
                 ×
               </button>
@@ -245,7 +287,13 @@ const s = {
     boxSizing: "border-box" as const,
   },
   bannerIcon: { fontSize: "1.5rem", lineHeight: 1, flexShrink: 0 },
-  bannerBody: { flex: 1, display: "flex", flexDirection: "column" as const, gap: "0.1rem", minWidth: 0 },
+  bannerBody: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "0.1rem",
+    minWidth: 0,
+  },
   bannerHeadline: {
     fontSize: "0.8rem",
     fontWeight: "800" as const,

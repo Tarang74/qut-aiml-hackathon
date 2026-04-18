@@ -477,7 +477,9 @@ function isActionRepeatable(
         state.farms.some((f) => f.id === action.target_farm && f.owner !== me)
       );
     case "burn_mill":
-      return aura >= 250 && state.mills.some((m) => m.id === action.target_mill);
+      return (
+        aura >= 250 && state.mills.some((m) => m.id === action.target_mill)
+      );
     case "hitman_worker":
       return (
         aura >= 500 &&
@@ -633,9 +635,9 @@ function HowToPlayModal({
             <p style={s.modalSectionTitle}>✨ Aura &amp; God Powers</p>
             <p style={s.modalText}>
               Aura accumulates +10 each cycle. Every 5 cycles, leaderboard
-              bonuses apply: top 1-5 earn +50, +40, +30, +25, +20 aura. Save
-              it for god-tier events: Drought (100), Market Panic (250),
-              Famine (500), or Nuclear Fallout (1000) to end the game in chaos.
+              bonuses apply: top 1-5 earn +50, +40, +30, +25, +20 aura. Save it
+              for god-tier events: Drought (100), Market Panic (250), Famine
+              (500), or Nuclear Fallout (1000) to end the game in chaos.
             </p>
           </div>
           <div style={s.modalSection}>
@@ -1355,7 +1357,10 @@ function ChaosTab({
         emoji="☠️"
         costLabel="750 aura"
         disabled={
-          !canAct || aura < 750 || vTargetNpc === null || npcOptions.length === 0
+          !canAct ||
+          aura < 750 ||
+          vTargetNpc === null ||
+          npcOptions.length === 0
         }
         selected={pendingLabel?.startsWith("Hitman on ") ?? false}
         onAction={() =>

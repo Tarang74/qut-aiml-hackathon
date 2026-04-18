@@ -22,19 +22,47 @@ interface BurstSpec {
 function burstForEvent(ev: GameEvent): BurstSpec | null {
   switch (ev.kind) {
     case "farm_burned":
-      return { emojis: ["🔥", "🔥", "🔥", "💨", "🌋"], count: 20, style: "burst" };
+      return {
+        emojis: ["🔥", "🔥", "🔥", "💨", "🌋"],
+        count: 20,
+        style: "burst",
+      };
     case "mill_burned":
-      return { emojis: ["🔥", "🔥", "💥", "🏭", "💨"], count: 18, style: "burst" };
+      return {
+        emojis: ["🔥", "🔥", "💥", "🏭", "💨"],
+        count: 18,
+        style: "burst",
+      };
     case "drought":
-      return { emojis: ["☀️", "☀️", "🌵", "🏜️", "💧"], count: 16, style: "fall" };
+      return {
+        emojis: ["☀️", "☀️", "🌵", "🏜️", "💧"],
+        count: 16,
+        style: "fall",
+      };
     case "famine":
-      return { emojis: ["💀", "🌾", "😫", "💀", "🥀"], count: 20, style: "fall" };
+      return {
+        emojis: ["💀", "🌾", "😫", "💀", "🥀"],
+        count: 20,
+        style: "fall",
+      };
     case "bumper_harvest":
-      return { emojis: ["🌽", "🌽", "🎉", "🎊", "✨", "🥳", "🌾"], count: 30, style: "rise" };
+      return {
+        emojis: ["🌽", "🌽", "🎉", "🎊", "✨", "🥳", "🌾"],
+        count: 30,
+        style: "rise",
+      };
     case "market_panic":
-      return { emojis: ["📉", "😱", "💸", "🔴", "😰"], count: 22, style: "fall" };
+      return {
+        emojis: ["📉", "😱", "💸", "🔴", "😰"],
+        count: 22,
+        style: "fall",
+      };
     case "nuclear_fallout":
-      return { emojis: ["☢️", "💥", "☠️", "🌡️", "☣️"], count: 25, style: "burst" };
+      return {
+        emojis: ["☢️", "💥", "☠️", "🌡️", "☣️"],
+        count: 25,
+        style: "burst",
+      };
     case "worker_killed":
       return { emojis: ["💀", "🔪", "😱"], count: 10, style: "burst" };
     case "npc_killed":
@@ -64,11 +92,15 @@ interface Particle {
   opacity: number;
   rotation: number;
   rotSpeed: number;
-  life: number;    // 0–1, decreasing
-  decay: number;   // how fast life falls per frame
+  life: number; // 0–1, decreasing
+  decay: number; // how fast life falls per frame
 }
 
-function makeParticles(spec: BurstSpec, canvasW: number, canvasH: number): Particle[] {
+function makeParticles(
+  spec: BurstSpec,
+  canvasW: number,
+  canvasH: number,
+): Particle[] {
   const particles: Particle[] = [];
   for (let i = 0; i < spec.count; i++) {
     const emoji = spec.emojis[Math.floor(Math.random() * spec.emojis.length)];
@@ -99,7 +131,12 @@ function makeParticles(spec: BurstSpec, canvasW: number, canvasH: number): Parti
     }
 
     particles.push({
-      x, y, vx, vy, emoji, size,
+      x,
+      y,
+      vx,
+      vy,
+      emoji,
+      size,
       opacity: 1,
       rotation: Math.random() * Math.PI * 2,
       rotSpeed: (Math.random() - 0.5) * 0.12,

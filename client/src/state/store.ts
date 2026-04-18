@@ -21,7 +21,12 @@ import type {
 
 // ── State shape ───────────────────────────────────────────────────────────────
 
-export type Phase = "lobby" | "decision" | "resolving" | "summary" | "game_over";
+export type Phase =
+  | "lobby"
+  | "decision"
+  | "resolving"
+  | "summary"
+  | "game_over";
 
 export interface GameState {
   // Connection / identity
@@ -76,7 +81,10 @@ export interface GameState {
   // Latest option strike list per player from PlayerState updates.
   playerOptionStrikes: Record<number, string[]>;
   // Latest option positions per player for strike-level host summaries.
-  playerOptionPositions: Record<number, Array<{ strike: string; long: boolean; quantity: number }>>;
+  playerOptionPositions: Record<
+    number,
+    Array<{ strike: string; long: boolean; quantity: number }>
+  >;
 
   // End-of-game structured stats (no LLM)
   debrief: DebriefStats | null;
@@ -159,8 +167,7 @@ export type GameAction =
   // Clear the host flag (e.g. after game_reset so old sessions don't linger)
   | { type: "clear_host" }
   // Player voluntarily leaves the game (clears player identity, returns to join)
-  | { type: "leave_game" }
-;
+  | { type: "leave_game" };
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
@@ -215,7 +222,10 @@ function reducer(state: GameState, action: GameAction): GameState {
           // Already joined as a player — ignore others' welcomes entirely.
           if (state.myPlayerId !== null) return state;
           // Only claim the welcome that matches the nonce we sent.
-          if (state.pendingJoinNonce === null || msg.client_nonce !== state.pendingJoinNonce) {
+          if (
+            state.pendingJoinNonce === null ||
+            msg.client_nonce !== state.pendingJoinNonce
+          ) {
             return state;
           }
           return {
@@ -230,9 +240,10 @@ function reducer(state: GameState, action: GameAction): GameState {
         case "price_update":
           // Keep a rolling volume series aligned to incoming price history length.
           // Server currently emits latest cycle_volume, so we append it over time.
-          const nextVolumeHistory = [...state.volumeHistory, msg.cycle_volume].slice(
-            -Math.max(msg.history.length, 1),
-          );
+          const nextVolumeHistory = [
+            ...state.volumeHistory,
+            msg.cycle_volume,
+          ].slice(-Math.max(msg.history.length, 1));
           return {
             ...state,
             price: msg.price,
@@ -318,21 +329,33 @@ function reducer(state: GameState, action: GameAction): GameState {
           };
 
         case "admin_summary":
-          return { ...state, adminSummary: { text: msg.text, cycle: msg.cycle } };
+          return {
+            ...state,
+            adminSummary: { text: msg.text, cycle: msg.cycle },
+          };
 
         case "milestone_summary":
-          return { ...state, milestoneSummary: { text: msg.text, cycle: msg.cycle } };
+          return {
+            ...state,
+            milestoneSummary: { text: msg.text, cycle: msg.cycle },
+          };
 
         case "player_roster":
           return {
             ...state,
-            knownPlayers: msg.players.map((p) => ({ id: p.player_id, name: p.name, role: p.role })),
+            knownPlayers: msg.players.map((p) => ({
+              id: p.player_id,
+              name: p.name,
+              role: p.role,
+            })),
           };
 
         case "player_left":
           return {
             ...state,
-            knownPlayers: state.knownPlayers.filter((p) => p.id !== msg.player_id),
+            knownPlayers: state.knownPlayers.filter(
+              (p) => p.id !== msg.player_id,
+            ),
           };
 
         case "kicked":
@@ -388,7 +411,9 @@ function reducer(state: GameState, action: GameAction): GameState {
 // ── Contexts ──────────────────────────────────────────────────────────────────
 
 export const GameStateContext = createContext<GameState>(INITIAL_STATE);
-export const GameDispatchContext = createContext<Dispatch<GameAction>>(() => {});
+export const GameDispatchContext = createContext<Dispatch<GameAction>>(
+  () => {},
+);
 // WsSend is stored separately so screens can call send() without triggering a
 // re-render cascade through GameDispatch.
 export const WsSendContext = createContext<

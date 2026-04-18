@@ -48,20 +48,36 @@ const AURA_MIDDLE = [
   "Your aura owes people aura 😳🙏",
 ];
 
-function getAuraComment(rank: number, totalPlayers: number, playerId: number): string {
+function getAuraComment(
+  rank: number,
+  totalPlayers: number,
+  playerId: number,
+): string {
   if (totalPlayers <= 0) return "Aura status: undetermined";
   if (rank === 1) return AURA_TOP[playerId % AURA_TOP.length];
-  if (rank === totalPlayers || totalPlayers === 1) return AURA_BOTTOM[playerId % AURA_BOTTOM.length];
+  if (rank === totalPlayers || totalPlayers === 1)
+    return AURA_BOTTOM[playerId % AURA_BOTTOM.length];
   // Interpolate for middle ranks: percentile 0 (rank 2) → 1 (rank N-1)
   const pct = (rank - 2) / Math.max(totalPlayers - 2, 1);
-  const idx = Math.min(Math.floor(pct * AURA_MIDDLE.length), AURA_MIDDLE.length - 1);
+  const idx = Math.min(
+    Math.floor(pct * AURA_MIDDLE.length),
+    AURA_MIDDLE.length - 1,
+  );
   return AURA_MIDDLE[idx];
 }
 
 // ── Top-level component ────────────────────────────────────────────────────────
 
 export default function DebriefScreen() {
-  const { debrief, headlines, priceHistory, myPlayerId, isHost, adminSummary, debriefNarrative } = useGameState();
+  const {
+    debrief,
+    headlines,
+    priceHistory,
+    myPlayerId,
+    isHost,
+    adminSummary,
+    debriefNarrative,
+  } = useGameState();
   const dispatch = useGameDispatch();
   const navigate = useNavigate();
   const send = useWsSend();
@@ -93,16 +109,29 @@ export default function DebriefScreen() {
           <p style={s.loading}>Calculating results…</p>
           <div style={s.hostBtns}>
             {isHost && (
-              <button style={s.newGameBtn} onClick={endHostSession}>New Game</button>
+              <button style={s.newGameBtn} onClick={endHostSession}>
+                New Game
+              </button>
             )}
-            <button style={s.quitBtn} onClick={quitGame}>Leave</button>
+            <button style={s.quitBtn} onClick={quitGame}>
+              Leave
+            </button>
           </div>
         </div>
       </div>
     );
   }
 
-  const { leaderboard, final_price, price_high, price_low, price_vol_pct, mm_blowups, total_cycles, game_over_reason } = debrief;
+  const {
+    leaderboard,
+    final_price,
+    price_high,
+    price_low,
+    price_vol_pct,
+    mm_blowups,
+    total_cycles,
+    game_over_reason,
+  } = debrief;
   const myRow = leaderboard.find((p) => p.player_id === myPlayerId) ?? null;
 
   // ── Player view ─────────────────────────────────────────────────────────────
@@ -114,15 +143,22 @@ export default function DebriefScreen() {
 
     return (
       <div style={s.playerRoot}>
-
         {/* Aura banner — full bleed, centred */}
-        <div style={{
-          ...s.auraBanner,
-          ...(myRow?.rank === 1 ? s.auraBannerTop : myRow?.rank === leaderboard.length ? s.auraBannerBottom : s.auraBannerMid),
-        }}>
+        <div
+          style={{
+            ...s.auraBanner,
+            ...(myRow?.rank === 1
+              ? s.auraBannerTop
+              : myRow?.rank === leaderboard.length
+                ? s.auraBannerBottom
+                : s.auraBannerMid),
+          }}
+        >
           <p style={s.auraComment}>{auraComment}</p>
           {myRow && (
-            <p style={s.auraRank}>#{myRow.rank} of {leaderboard.length}</p>
+            <p style={s.auraRank}>
+              #{myRow.rank} of {leaderboard.length}
+            </p>
           )}
         </div>
 
@@ -135,27 +171,44 @@ export default function DebriefScreen() {
             </div>
             <div style={s.playerStatRow}>
               <span style={s.playerStatLabel}>PnL</span>
-              <span style={{ ...s.playerStatValue, color: pnl >= 0 ? "#1d6b1d" : "#7a1a1a" }}>
+              <span
+                style={{
+                  ...s.playerStatValue,
+                  color: pnl >= 0 ? "#1d6b1d" : "#7a1a1a",
+                }}
+              >
                 {pnl >= 0 ? "+" : ""}${Math.abs(pnl).toFixed(0)}
               </span>
             </div>
             <div style={s.playerStatRow}>
               <span style={s.playerStatLabel}>Return</span>
-              <span style={{ ...s.playerStatValue, color: myRow.return_pct >= 0 ? "#1d6b1d" : "#7a1a1a" }}>
-                {myRow.return_pct >= 0 ? "+" : ""}{myRow.return_pct.toFixed(1)}%
+              <span
+                style={{
+                  ...s.playerStatValue,
+                  color: myRow.return_pct >= 0 ? "#1d6b1d" : "#7a1a1a",
+                }}
+              >
+                {myRow.return_pct >= 0 ? "+" : ""}
+                {myRow.return_pct.toFixed(1)}%
               </span>
             </div>
             <div style={s.playerStatRow}>
               <span style={s.playerStatLabel}>Role</span>
-              <span style={{ ...s.playerStatValue, color: myRow.role === "farmer" ? "#1d6b1d" : "#0d5858" }}>
+              <span
+                style={{
+                  ...s.playerStatValue,
+                  color: myRow.role === "farmer" ? "#1d6b1d" : "#0d5858",
+                }}
+              >
                 {myRow.role}
               </span>
             </div>
           </div>
         )}
 
-        <button style={s.playerLeaveBtn} onClick={quitGame}>Leave Game</button>
-
+        <button style={s.playerLeaveBtn} onClick={quitGame}>
+          Leave Game
+        </button>
       </div>
     );
   }
@@ -166,7 +219,6 @@ export default function DebriefScreen() {
 
   return (
     <div style={s.root}>
-
       {/* ── 1. Header ───────────────────────────────────────────────────────── */}
       <div style={s.header}>
         <div>
@@ -175,8 +227,12 @@ export default function DebriefScreen() {
         </div>
         {isHost && (
           <div style={s.hostBtns}>
-            <button style={s.newGameBtn} onClick={endHostSession}>New Game</button>
-            <button style={s.quitBtn} onClick={quitGame}>Quit</button>
+            <button style={s.newGameBtn} onClick={endHostSession}>
+              New Game
+            </button>
+            <button style={s.quitBtn} onClick={quitGame}>
+              Quit
+            </button>
           </div>
         )}
       </div>
@@ -185,25 +241,47 @@ export default function DebriefScreen() {
       {leaderboard.length > 0 && (
         <div style={s.podiumRow}>
           {top3[1] ? (
-            <PodiumCard player={top3[1]} highlight={top3[1].player_id === myPlayerId} />
-          ) : <div />}
+            <PodiumCard
+              player={top3[1]}
+              highlight={top3[1].player_id === myPlayerId}
+            />
+          ) : (
+            <div />
+          )}
           {winner && (
-            <PodiumCard player={winner} first highlight={winner.player_id === myPlayerId} />
+            <PodiumCard
+              player={winner}
+              first
+              highlight={winner.player_id === myPlayerId}
+            />
           )}
           {top3[2] ? (
-            <PodiumCard player={top3[2]} highlight={top3[2].player_id === myPlayerId} />
-          ) : <div />}
+            <PodiumCard
+              player={top3[2]}
+              highlight={top3[2].player_id === myPlayerId}
+            />
+          ) : (
+            <div />
+          )}
         </div>
       )}
 
       {/* ── 3. Market stats ─────────────────────────────────────────────────── */}
       <div style={s.statsStrip}>
         <Stat label="Final Price" value={`$${final_price.toFixed(2)}`} />
-        <Stat label="Season High" value={`$${price_high.toFixed(2)}`} color="#1d6b1d" />
-        <Stat label="Season Low"  value={`$${price_low.toFixed(2)}`}  color="#7a1a1a" />
-        <Stat label="Volatility"  value={`${price_vol_pct.toFixed(1)}%`} />
-        <Stat label="Cycles"      value={String(total_cycles)} />
-        <Stat label="MM Blowups"  value={String(mm_blowups)} />
+        <Stat
+          label="Season High"
+          value={`$${price_high.toFixed(2)}`}
+          color="#1d6b1d"
+        />
+        <Stat
+          label="Season Low"
+          value={`$${price_low.toFixed(2)}`}
+          color="#7a1a1a"
+        />
+        <Stat label="Volatility" value={`${price_vol_pct.toFixed(1)}%`} />
+        <Stat label="Cycles" value={String(total_cycles)} />
+        <Stat label="MM Blowups" value={String(mm_blowups)} />
       </div>
 
       {/* ── 4. Price chart ──────────────────────────────────────────────────── */}
@@ -222,9 +300,13 @@ export default function DebriefScreen() {
         <table style={s.table}>
           <thead>
             <tr>
-              {["#", "Player", "Role", "Net Worth", "PnL", "Return"].map((h) => (
-                <th key={h} style={s.th}>{h}</th>
-              ))}
+              {["#", "Player", "Role", "Net Worth", "PnL", "Return"].map(
+                (h) => (
+                  <th key={h} style={s.th}>
+                    {h}
+                  </th>
+                ),
+              )}
             </tr>
           </thead>
           <tbody>
@@ -233,15 +315,41 @@ export default function DebriefScreen() {
               const isMe = p.player_id === myPlayerId;
               return (
                 <tr key={p.player_id} style={isMe ? s.myRow : undefined}>
-                  <td style={s.td}>{p.rank === 1 ? "🥇" : p.rank === 2 ? "🥈" : p.rank === 3 ? "🥉" : p.rank}</td>
-                  <td style={{ ...s.td, fontWeight: isMe ? "700" : "normal" }}>{p.name}</td>
-                  <td style={{ ...s.td, color: p.role === "farmer" ? "#1d6b1d" : "#0d5858" }}>{p.role}</td>
+                  <td style={s.td}>
+                    {p.rank === 1
+                      ? "🥇"
+                      : p.rank === 2
+                        ? "🥈"
+                        : p.rank === 3
+                          ? "🥉"
+                          : p.rank}
+                  </td>
+                  <td style={{ ...s.td, fontWeight: isMe ? "700" : "normal" }}>
+                    {p.name}
+                  </td>
+                  <td
+                    style={{
+                      ...s.td,
+                      color: p.role === "farmer" ? "#1d6b1d" : "#0d5858",
+                    }}
+                  >
+                    {p.role}
+                  </td>
                   <td style={s.td}>${fmt(p.net_worth)}</td>
-                  <td style={{ ...s.td, color: pnl >= 0 ? "#1d6b1d" : "#7a1a1a" }}>
+                  <td
+                    style={{ ...s.td, color: pnl >= 0 ? "#1d6b1d" : "#7a1a1a" }}
+                  >
                     {pnl >= 0 ? "+" : ""}${Math.abs(pnl).toFixed(0)}
                   </td>
-                  <td style={{ ...s.td, color: p.return_pct >= 0 ? "#1d6b1d" : "#7a1a1a", fontWeight: 600 }}>
-                    {p.return_pct >= 0 ? "+" : ""}{p.return_pct.toFixed(1)}%
+                  <td
+                    style={{
+                      ...s.td,
+                      color: p.return_pct >= 0 ? "#1d6b1d" : "#7a1a1a",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {p.return_pct >= 0 ? "+" : ""}
+                    {p.return_pct.toFixed(1)}%
                   </td>
                 </tr>
               );
@@ -288,17 +396,36 @@ export default function DebriefScreen() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function PodiumCard({ player, first = false, highlight = false }: { player: PlayerSummary; first?: boolean; highlight?: boolean }) {
+function PodiumCard({
+  player,
+  first = false,
+  highlight = false,
+}: {
+  player: PlayerSummary;
+  first?: boolean;
+  highlight?: boolean;
+}) {
   const medals = ["🥇", "🥈", "🥉"];
   return (
-    <div style={{
-      ...s.podiumCard,
-      ...(first ? s.podiumFirst : {}),
-      ...(highlight ? s.podiumHighlight : {}),
-    }}>
-      <span style={s.podiumMedal}>{medals[player.rank - 1] ?? `#${player.rank}`}</span>
+    <div
+      style={{
+        ...s.podiumCard,
+        ...(first ? s.podiumFirst : {}),
+        ...(highlight ? s.podiumHighlight : {}),
+      }}
+    >
+      <span style={s.podiumMedal}>
+        {medals[player.rank - 1] ?? `#${player.rank}`}
+      </span>
       <span style={s.podiumName}>{player.name}</span>
-      <span style={{ ...s.podiumRole, color: player.role === "farmer" ? "#1d6b1d" : "#0d5858" }}>{player.role}</span>
+      <span
+        style={{
+          ...s.podiumRole,
+          color: player.role === "farmer" ? "#1d6b1d" : "#0d5858",
+        }}
+      >
+        {player.role}
+      </span>
       <span style={s.podiumWorth}>${fmt(player.net_worth)}</span>
       <ReturnBadge pct={player.return_pct} />
     </div>
@@ -308,24 +435,37 @@ function PodiumCard({ player, first = false, highlight = false }: { player: Play
 function ReturnBadge({ pct }: { pct: number }) {
   const positive = pct >= 0;
   return (
-    <span style={{
-      fontSize: "0.85rem",
-      fontWeight: 700,
-      color: positive ? "#1d6b1d" : "#7a1a1a",
-      background: positive ? "#e8f5e8" : "#fbeaea",
-      borderRadius: 4,
-      padding: "0.15rem 0.5rem",
-    }}>
-      {positive ? "+" : ""}{pct.toFixed(1)}%
+    <span
+      style={{
+        fontSize: "0.85rem",
+        fontWeight: 700,
+        color: positive ? "#1d6b1d" : "#7a1a1a",
+        background: positive ? "#e8f5e8" : "#fbeaea",
+        borderRadius: 4,
+        padding: "0.15rem 0.5rem",
+      }}
+    >
+      {positive ? "+" : ""}
+      {pct.toFixed(1)}%
     </span>
   );
 }
 
-function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
+function Stat({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) {
   return (
     <div style={s.statCell}>
       <span style={s.statLabel}>{label}</span>
-      <span style={{ ...s.statValue, ...(color ? { color } : {}) }}>{value}</span>
+      <span style={{ ...s.statValue, ...(color ? { color } : {}) }}>
+        {value}
+      </span>
     </div>
   );
 }
@@ -333,7 +473,9 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
 /** Format a Decimal string as a dollar amount with commas, no cents. */
 function fmt(decimal: string): string {
   const n = parseFloat(decimal);
-  return isNaN(n) ? "—" : n.toLocaleString("en-AU", { maximumFractionDigits: 0 });
+  return isNaN(n)
+    ? "—"
+    : n.toLocaleString("en-AU", { maximumFractionDigits: 0 });
 }
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
@@ -523,9 +665,23 @@ const s = {
     background: "#f4fbf4",
   },
   podiumMedal: { fontSize: "2rem", lineHeight: 1 },
-  podiumName: { fontSize: "1.1rem", fontWeight: "700" as const, color: "#18181a" },
-  podiumRole: { fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: "0.06em" },
-  podiumWorth: { fontSize: "1.2rem", fontWeight: "800" as const, color: "#18181a", marginTop: "0.1rem" },
+  podiumName: {
+    fontSize: "1.1rem",
+    fontWeight: "700" as const,
+    color: "#18181a",
+  },
+  podiumRole: {
+    fontSize: "0.75rem",
+    fontWeight: 600,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+  },
+  podiumWorth: {
+    fontSize: "1.2rem",
+    fontWeight: "800" as const,
+    color: "#18181a",
+    marginTop: "0.1rem",
+  },
 
   // Stats strip
   statsStrip: {
@@ -544,8 +700,18 @@ const s = {
     gap: "0.2rem",
     textAlign: "center" as const,
   },
-  statLabel: { fontSize: "0.7rem", color: "#9a9a90", textTransform: "uppercase" as const, letterSpacing: "0.08em", fontWeight: 600 },
-  statValue: { fontSize: "1.2rem", fontWeight: "800" as const, color: "#18181a" },
+  statLabel: {
+    fontSize: "0.7rem",
+    color: "#9a9a90",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.08em",
+    fontWeight: 600,
+  },
+  statValue: {
+    fontSize: "1.2rem",
+    fontWeight: "800" as const,
+    color: "#18181a",
+  },
 
   // Chart
   chartCard: {
@@ -554,7 +720,12 @@ const s = {
     borderRadius: 10,
     padding: "1.25rem",
   },
-  chartBox: { height: "clamp(220px, 18vw, 400px)", borderRadius: 6, overflow: "hidden", marginTop: "0.75rem" },
+  chartBox: {
+    height: "clamp(220px, 18vw, 400px)",
+    borderRadius: 6,
+    overflow: "hidden",
+    marginTop: "0.75rem",
+  },
 
   // Generic card
   card: {
@@ -597,7 +768,11 @@ const s = {
   myRow: { background: "#f4fbf4" },
 
   // Headlines
-  headlineList: { display: "flex", flexDirection: "column" as const, gap: "0.6rem" },
+  headlineList: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "0.6rem",
+  },
   headlineRow: {
     display: "flex",
     gap: "1rem",
@@ -605,10 +780,33 @@ const s = {
     borderLeft: "3px solid #e2ddd6",
     paddingLeft: "0.75rem",
   },
-  headlineCycle: { fontSize: "0.75rem", color: "#9a9a90", fontWeight: 600, flexShrink: 0, textTransform: "uppercase" as const, letterSpacing: "0.05em" },
-  headlineText: { fontSize: "0.95rem", color: "#3a3a36", lineHeight: 1.5, fontStyle: "italic" as const },
+  headlineCycle: {
+    fontSize: "0.75rem",
+    color: "#9a9a90",
+    fontWeight: 600,
+    flexShrink: 0,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.05em",
+  },
+  headlineText: {
+    fontSize: "0.95rem",
+    color: "#3a3a36",
+    lineHeight: 1.5,
+    fontStyle: "italic" as const,
+  },
 
   // Narrative / summary text
-  summaryText: { margin: 0, color: "#3a3a36", fontSize: "1rem", lineHeight: 1.8, whiteSpace: "pre-wrap" as const },
-  narrativeLoading: { margin: 0, color: "#9a9a90", fontStyle: "italic" as const, fontSize: "0.95rem" },
+  summaryText: {
+    margin: 0,
+    color: "#3a3a36",
+    fontSize: "1rem",
+    lineHeight: 1.8,
+    whiteSpace: "pre-wrap" as const,
+  },
+  narrativeLoading: {
+    margin: 0,
+    color: "#9a9a90",
+    fontStyle: "italic" as const,
+    fontSize: "0.95rem",
+  },
 } as const;

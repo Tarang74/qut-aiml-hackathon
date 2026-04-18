@@ -12,7 +12,9 @@ export default function NewsTicker() {
   const { headlines, cycleEvents } = useGameState();
 
   const rumors = cycleEvents
-    .filter((ev): ev is Extract<typeof ev, { kind: "rumor" }> => ev.kind === "rumor")
+    .filter(
+      (ev): ev is Extract<typeof ev, { kind: "rumor" }> => ev.kind === "rumor",
+    )
     .map((ev) => `🚨 RUMOUR: "${ev.text}"`);
 
   const headlineTexts = headlines.map((h) => `📰 ${h.text}`);

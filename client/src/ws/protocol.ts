@@ -3,7 +3,7 @@
 
 // ── Primitive IDs (newtype wrappers serialise as their inner value) ───────────
 
-export type PlayerId = number;   // u64 (note: JS safe up to 2^53)
+export type PlayerId = number; // u64 (note: JS safe up to 2^53)
 export type FarmId = number;
 export type MillId = number;
 export type NpcId = number;
@@ -70,13 +70,24 @@ export interface OptionPosition {
 // ── Game events (tagged with `kind`) ──────────────────────────────────────────
 
 export type GameEvent =
-  | { kind: "order_filled"; player_id: PlayerId; side: string; price: string; quantity: number }
+  | {
+      kind: "order_filled";
+      player_id: PlayerId;
+      side: string;
+      price: string;
+      quantity: number;
+    }
   | { kind: "farm_burned"; farm_id: FarmId; arsonist?: PlayerId }
   | { kind: "farm_healed"; farm_id: FarmId }
   | { kind: "mill_burned"; mill_id: MillId }
   | { kind: "worker_killed"; farm_id: FarmId }
   | { kind: "npc_killed"; npc_id: NpcId; npc_name: string }
-  | { kind: "npc_farm_auctioned"; farm_id: FarmId; buyer: PlayerId; price: string }
+  | {
+      kind: "npc_farm_auctioned";
+      farm_id: FarmId;
+      buyer: PlayerId;
+      price: string;
+    }
   | { kind: "rumor"; text: string }
   | { kind: "drought"; cycles: number }
   | { kind: "famine" }
@@ -99,9 +110,9 @@ export interface PlayerSummary {
   name: string;
   role: string;
   net_worth: string; // Decimal
-  pnl: string;       // Decimal, net_worth - starting_cash
+  pnl: string; // Decimal, net_worth - starting_cash
   return_pct: number;
-  rank: number;      // 1 = best
+  rank: number; // 1 = best
 }
 
 export interface DebriefStats {
@@ -120,11 +131,37 @@ export interface DebriefStats {
 // ── Server → Client messages (tagged with `type`) ─────────────────────────────
 
 export type ServerMsg =
-  | { type: "welcome"; player_id: PlayerId; name: string; role: string; client_nonce: string }
-  | { type: "price_update"; price: string; history: string[]; bid_depth: number; ask_depth: number; cycle_volume: number }
-  | { type: "player_roster"; players: Array<{ player_id: PlayerId; name: string; role: string }> }
-  | { type: "cycle_phase"; phase: string; cycle: number; seconds_remaining: number }
-  | { type: "world_snapshot"; farms: Farm[]; mills: Mill[]; npc_owners: NpcOwner[] }
+  | {
+      type: "welcome";
+      player_id: PlayerId;
+      name: string;
+      role: string;
+      client_nonce: string;
+    }
+  | {
+      type: "price_update";
+      price: string;
+      history: string[];
+      bid_depth: number;
+      ask_depth: number;
+      cycle_volume: number;
+    }
+  | {
+      type: "player_roster";
+      players: Array<{ player_id: PlayerId; name: string; role: string }>;
+    }
+  | {
+      type: "cycle_phase";
+      phase: string;
+      cycle: number;
+      seconds_remaining: number;
+    }
+  | {
+      type: "world_snapshot";
+      farms: Farm[];
+      mills: Mill[];
+      npc_owners: NpcOwner[];
+    }
   | { type: "cycle_events"; cycle: number; events: GameEvent[] }
   | {
       type: "player_state";
@@ -161,8 +198,20 @@ export type PlayerAction =
   | { kind: "fire_worker"; farm_id: FarmId }
   | { kind: "sell_corn"; farm_id: FarmId }
   | { kind: "operate_mill"; mill_id: MillId }
-  | { kind: "buy_option"; option_type: OptionRequest; strike: string; expiry_cycles: number; quantity: number }
-  | { kind: "write_option"; option_type: OptionRequest; strike: string; expiry_cycles: number; quantity: number }
+  | {
+      kind: "buy_option";
+      option_type: OptionRequest;
+      strike: string;
+      expiry_cycles: number;
+      quantity: number;
+    }
+  | {
+      kind: "write_option";
+      option_type: OptionRequest;
+      strike: string;
+      expiry_cycles: number;
+      quantity: number;
+    }
   | { kind: "burn_farm"; target_farm: FarmId }
   | { kind: "burn_mill"; target_mill: MillId }
   | { kind: "hitman_worker"; target_farm: FarmId }
@@ -191,7 +240,13 @@ export type AdminCommand =
   | { cmd: "continue_game" };
 
 export type ClientMsg =
-  | { type: "join"; name: string; role: Role; client_nonce: string; game_code: string }
+  | {
+      type: "join";
+      name: string;
+      role: Role;
+      client_nonce: string;
+      game_code: string;
+    }
   | { type: "action"; action: PlayerAction }
   | { type: "admin"; command: AdminCommand }
   | { type: "ping" }
